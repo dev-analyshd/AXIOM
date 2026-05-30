@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AXIOM — Adaptive eXpressive Intelligence Ontological Matrix</title>
+<style>
+  :root {
+    --bg: #0a0c10;
+    --bg2: #0f1218;
+    --bg3: #151b24;
+    --border: #1e2a38;
+    --accent: #00d4ff;
+    --accent2: #7c3aed;
+    --accent3: #10b981;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --text: #e2e8f0;
+    --text2: #94a3b8;
+    --text3: #475569;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+  header {
+    background: linear-gradient(135deg, #0d1117 0%, #0f172a 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 32px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .logo {
+    font-size: 28px;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: -1px;
+  }
+  .tagline {
+    color: var(--text2);
+    font-size: 12px;
+    font-style: italic;
+  }
+  .version-badge {
+    margin-left: auto;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    padding: 4px 12px;
+    border-radius: 20px;
+    color: var(--accent);
+    font-size: 11px;
+  }
+  main {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 32px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    transition: border-color 0.2s;
+  }
+  .card:hover { border-color: #2a3a50; }
+  .card-full { grid-column: 1 / -1; }
+  .card h2 {
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--accent);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card h2 .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .equation-box {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent2);
+    border-radius: 8px;
+    padding: 16px 20px;
+    font-size: 14px;
+    color: #c4b5fd;
+    text-align: center;
+    letter-spacing: 0.5px;
+    margin-bottom: 16px;
+  }
+  .eq-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .eq-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text2);
+  }
+  .eq-table td:first-child {
+    font-family: monospace;
+    color: #c4b5fd;
+    white-space: nowrap;
+    width: 140px;
+  }
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .slider-label {
+    width: 80px;
+    color: var(--text2);
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .slider-label span {
+    display: block;
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 11px;
+  }
+  input[type=range] {
+    flex: 1;
+    -webkit-appearance: none;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+  }
+  .slider-val {
+    width: 50px;
+    text-align: right;
+    color: var(--text);
+    font-size: 12px;
+  }
+  .result-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .result-item {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+  }
+  .result-item .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text3);
+    margin-bottom: 4px;
+  }
+  .result-item .value {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .result-item.silenced .value { color: var(--danger); }
+  .result-item.coherent .value { color: var(--accent3); }
+  .btn {
+    background: linear-gradient(135deg, var(--accent2), #5b21b6);
+    border: none;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    margin-top: 16px;
+    transition: opacity 0.2s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .layers-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .layer {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    transition: background 0.2s;
+  }
+  .layer:hover { background: #1a2535; }
+  .layer-num {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .layer-name { font-weight: 700; font-size: 12px; flex: 1; }
+  .layer-desc { color: var(--text2); font-size: 11px; }
+  .layer-lang {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid;
+    flex-shrink: 0;
+  }
+  .lang-rust { border-color: #f97316; color: #f97316; }
+  .lang-go   { border-color: #06b6d4; color: #06b6d4; }
+  .lang-python { border-color: #eab308; color: #eab308; }
+  .lang-ts   { border-color: #3b82f6; color: #3b82f6; }
+  .ube-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 6px;
+  }
+  .ube-tag {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 10px;
+    text-align: center;
+    color: var(--text2);
+    transition: all 0.2s;
+    cursor: default;
+  }
+  .ube-tag:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .ube-num {
+    display: block;
+    font-size: 9px;
+    color: var(--text3);
+    margin-bottom: 2px;
+  }
+  .resonance-result {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 12px;
+    display: none;
+  }
+  .resonance-result.active { display: block; }
+  .res-score {
+    font-size: 36px;
+    font-weight: 800;
+    margin-bottom: 8px;
+  }
+  .tier-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .tier-high    { background: #064e3b; color: var(--accent3); }
+  .tier-std     { background: #1e3a5f; color: var(--accent); }
+  .tier-emerg   { background: #451a03; color: var(--warn); }
+  .tier-none    { background: #1a1a1a; color: var(--text3); }
+  .rf-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 48px;
+    margin-top: 12px;
+  }
+  .rf-bar {
+    flex: 1;
+    background: var(--accent);
+    opacity: 0.7;
+    border-radius: 2px 2px 0 0;
+    min-height: 2px;
+    transition: height 0.4s ease;
+  }
+  .silence-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 8px;
+  }
+  .silence-on  { background: #2d1515; border: 1px solid #7f1d1d; color: var(--danger); }
+  .silence-off { background: #0f2d1f; border: 1px solid #064e3b; color: var(--accent3); }
+  .silence-dot { width: 8px; height: 8px; border-radius: 50%; }
+  footer {
+    text-align: center;
+    padding: 24px;
+    color: var(--text3);
+    font-size: 11px;
+    border-top: 1px solid var(--border);
+    margin-top: 20px;
+  }
+  footer a { color: var(--accent2); text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="logo">AXIOM</div>
+    <div class="tagline">"Everything that exists behaves. Everything that behaves is knowable. Everything knowable is trusted."</div>
+  </div>
+  <div class="version-badge">D(AXIOM, t) — no discrete version</div>
+</header>
+
+<main>
+  <!-- Master Equation -->
+  <div class="card card-full">
+    <h2><span class="dot"></span>Master Equation</h2>
+    <div class="equation-box">
+      Ξ(entity, t) = [BC(entity,t) ≥ Ψ(entity,t)] · Ε(entity,t) · e<sup>Λ(entity)·D(entity,t)</sup>
+    </div>
+    <table class="eq-table">
+      <tr><td>Ξ(entity, t)</td><td>Behavioral truth state of the entity at time t</td></tr>
+      <tr><td>BC(entity, t)</td><td>Five-plane behavioral coherence score ∈ [0, 1]</td></tr>
+      <tr><td>Ψ(entity, t)</td><td>Dynamic coherence threshold — Ψ = Ψ_base + α·Threat + β·Volatility − γ·log(1+D)</td></tr>
+      <tr><td>Ε(entity, t)</td><td>Expression state (output gate) — gated by SILENCE Principle</td></tr>
+      <tr><td>Λ(entity)</td><td>Living Moat accumulation rate = Λ_base · Role_Multiplier · Love</td></tr>
+      <tr><td>D(entity, t)</td><td>Akashic Depth — cumulative behavioral richness (monotonically increasing)</td></tr>
+    </table>
+  </div>
+
+  <!-- Interactive Calculator -->
+  <div class="card">
+    <h2><span class="dot"></span>Live Master Equation Calculator</h2>
+
+    <div class="slider-row">
+      <div class="slider-label">BC <span>Coherence</span></div>
+      <input type="range" id="sl-bc" min="0" max="1" step="0.01" value="0.80">
+      <div class="slider-val" id="val-bc">0.80</div>
+    </div>
+    <div class="slider-row">
+      <div class="slider-label">Ψ base <span>Threshold</span></div>
+      <input type="range" id="sl-psi" min="0.1" max="0.99" step="0.01" value="0.55">
+      <div class="slider-val" id="val-psi">0.55</div>
+    </div>
+    <div class="slider-row">
+      <div class="slider-label">Ε <span>Expression</span></div>
+      <input type="range" id="sl-eps" min="0" max="2" step="0.05" value="1.00">
+      <div class="slider-val" id="val-eps">1.00</div>
+    </div>
+    <div class="slider-row">
+      <div class="slider-label">Λ <span>Moat Rate</span></div>
+      <input type="range" id="sl-lam" min="0.0001" max="0.01" step="0.0001" value="0.001">
+      <div class="slider-val" id="val-lam">0.0010</div>
+    </div>
+    <div class="slider-row">
+      <div class="slider-label">D <span>Depth</span></div>
+      <input type="range" id="sl-dep" min="0" max="5000" step="10" value="1000">
+      <div class="slider-val" id="val-dep">1000</div>
+    </div>
+
+    <div id="silence-indicator" class="silence-indicator silence-off">
+      <div class="silence-dot" id="sdot" style="background: #10b981"></div>
+      <span id="silence-text">OPERATIONAL — BC ≥ Ψ</span>
+    </div>
+
+    <div class="result-grid">
+      <div class="result-item" id="xi-item">
+        <div class="label">Ξ(entity, t)</div>
+        <div class="value" id="xi-val">—</div>
+      </div>
+      <div class="result-item">
+        <div class="label">Dynamic Ψ</div>
+        <div class="value" id="psi-dyn-val">—</div>
+      </div>
+      <div class="result-item">
+        <div class="label">Akashic Depth D</div>
+        <div class="value" id="depth-val">—</div>
+      </div>
+      <div class="result-item">
+        <div class="label">Gov. Weight</div>
+        <div class="value" id="gov-val">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RCP Resonance -->
+  <div class="card">
+    <h2><span class="dot"></span>RCP Resonance Simulator</h2>
+    <p style="color: var(--text2); font-size: 12px; margin-bottom: 16px;">
+      Simulate the Resonance Communication Protocol (L6). Two entities connect based on the cosine similarity of their 32-dim Resonance Frequency vectors RF(entity, t).
+    </p>
+    <div style="font-size: 12px; color: var(--text2); margin-bottom: 8px;">
+      <strong style="color: var(--text)">RCP(Ei, Ej)</strong> = RF(Ei)·RF(Ej) / (|RF(Ei)| · |RF(Ej)|)
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; font-size: 11px; margin-bottom: 12px;">
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center;">
+        <div style="color:var(--accent3); font-weight:700;">&gt; 0.50</div>
+        <div style="color:var(--text3);">High BW</div>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center;">
+        <div style="color:var(--accent); font-weight:700;">&gt; 0.15</div>
+        <div style="color:var(--text3);">Standard</div>
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center;">
+        <div style="color:var(--warn); font-weight:700;">&gt; 0.05</div>
+        <div style="color:var(--text3);">Emergency</div>
+      </div>
+    </div>
+    <button class="btn" onclick="simulateResonance()">⚡ Simulate Two Entities</button>
+    <div id="resonance-result" class="resonance-result">
+      <div class="label" style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Resonance Score</div>
+      <div class="res-score" id="res-score-val">—</div>
+      <div id="res-tier-badge" class="tier-badge">—</div>
+      <div class="rf-bars" id="rf-bars-a"></div>
+      <div style="font-size:10px;color:var(--text3);margin-top:4px;">RF vector Entity A (32 dimensions)</div>
+    </div>
+  </div>
+
+  <!-- 7-Layer Stack -->
+  <div class="card card-full">
+    <h2><span class="dot"></span>The 7-Layer Living Stack</h2>
+    <div class="layers-stack">
+      <div class="layer">
+        <div class="layer-num" style="background:#1a0533;color:#c4b5fd;">L6</div>
+        <div>
+          <div class="layer-name">Resonance Network (RCP)</div>
+          <div class="layer-desc">Replaces TCP/IP — routing by behavioral resonance, not IP addresses</div>
+        </div>
+        <span class="layer-lang lang-go">Go</span>
+      </div>
+      <div class="layer">
+        <div class="layer-num" style="background:#0f2033;color:#38bdf8;">L5</div>
+        <div>
+          <div class="layer-name">Living Kernel (CBRA, BIS, IKP, BFS)</div>
+          <div class="layer-desc">Self-evolving scheduler, behavioral interrupt system, immunity protocol, behavioral file system</div>
+        </div>
+        <span class="layer-lang lang-rust">Rust</span>
+      </div>
+      <div class="layer">
+        <div class="layer-num" style="background:#0f2d1f;color:#34d399;">L4</div>
+        <div>
+          <div class="layer-name">Coherence Engine (5-Plane BC)</div>
+          <div class="layer-desc">Flink + PyTorch: Φ Causal Flux, M Model Confidence, Σ Network Consensus, K Context, A Adaptive AI</div>
+        </div>
+        <span class="layer-lang lang-python">Python</span>
+      </div>
+      <div class="layer">
+        <div class="layer-num" style="background:#2d1a00;color:#fbbf24;">L3</div>
+        <div>
+          <div class="layer-name">Living Akashic Index (Eternal Memory)</div>
+          <div class="layer-desc">TimescaleDB: immutable behavioral history, chain-linked UBH records with Merkle attestation</div>
+        </div>
+        <span class="layer-lang lang-rust">Rust</span>
+      </div>
+      <div class="layer">
+        <div class="layer-num" style="background:#1a0f2e;color:#a78bfa;">L2</div>
+        <div>
+          <div class="layer-name">Entity Resolution (BEO Universal)</div>
+          <div class="layer-desc">Behavioral Entity Object — resolves identity across all types: human, device, contract, AI, institution</div>
+        </div>
+        <span class="layer-lang lang-rust">Rust</span>
+      </div>
+      <div class="layer">
+        <div class="layer-num" style="background:#1a1a00;color:#facc15;">L1</div>
+        <div>
+          <div class="layer-name">Universal Behavioral Hash (UBH) Engine</div>
+          <div class="layer-desc">32 UBE types — every action by any entity hashes into the same 256-bit behavioral space</div>
+        </div>
+        <span class="layer-lang lang-rust">Rust</span>
+      </div>
+      <div class="layer">
+        <div class="layer-num" style="background:#1a0a0a;color:#f87171;">L0</div>
+        <div>
+          <div class="layer-name">Physical Reality Substrate</div>
+          <div class="layer-desc">GPS atomic time, HSM entropy, hardware attestation — anchors AXIOM to physical reality</div>
+        </div>
+        <span class="layer-lang lang-rust">Rust + C</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- UBE Types -->
+  <div class="card card-full">
+    <h2><span class="dot"></span>32 Universal Behavioral Event Types (UBE)</h2>
+    <p style="color: var(--text2); font-size: 12px; margin-bottom: 16px;">
+      Every action by any entity — human, AI, device, contract, institution — maps to one of these 32 universal event types. The same hash space captures all behavior across all domains.
+    </p>
+    <div class="ube-grid" id="ube-grid"></div>
+  </div>
+
+  <!-- Repository Structure -->
+  <div class="card">
+    <h2><span class="dot"></span>Repository Structure</h2>
+    <div style="display:flex;flex-direction:column;gap:6px;">
+      <div style="display:flex;gap:10px;align-items:baseline;">
+        <span style="color:var(--accent);min-width:140px;">axiom-core/</span>
+        <span style="color:var(--text2)">Rust: L0, L1, L2, L5 — built ✓</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:baseline;">
+        <span style="color:var(--accent);min-width:140px;">axiom-akashic/</span>
+        <span style="color:var(--text2)">Rust: L3 Akashic Index (TimescaleDB)</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:baseline;">
+        <span style="color:var(--accent);min-width:140px;">axiom-rcp/</span>
+        <span style="color:var(--text2)">Go: L6 Resonance Communication Protocol</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:baseline;">
+        <span style="color:var(--accent);min-width:140px;">axiom-coherence/</span>
+        <span style="color:var(--text2)">Python: L4 Coherence Engine (Flink + PyTorch)</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:baseline;">
+        <span style="color:var(--accent);min-width:140px;">contracts/</span>
+        <span style="color:var(--text2)">Solidity: TRIONOracleV4, BehavioralIdentity</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:baseline;">
+        <span style="color:var(--accent);min-width:140px;">sdk/</span>
+        <span style="color:var(--text2)">TypeScript: CDBI SDK + React hooks</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:baseline;">
+        <span style="color:var(--accent);min-width:140px;">cairo/ + circuits/</span>
+        <span style="color:var(--text2)">ZK: BZKP circuits (Cairo + Noir)</span>
+      </div>
+      <div style="display:flex;gap:10px;align-items:baseline;">
+        <span style="color:var(--accent);min-width:140px;">axiom-c/ + axiom-asm/</span>
+        <span style="color:var(--text2)">C + ASM: bare-metal runtime (ARM, RISC-V, x86-64)</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- BC Plane Weights -->
+  <div class="card">
+    <h2><span class="dot"></span>Five-Plane Coherence BC(entity, t)</h2>
+    <p style="color:var(--text2);font-size:12px;margin-bottom:16px;">
+      BC = α·Φ + β·M + γ·Σ + δ·K + ε·A
+    </p>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+          <span><strong style="color:#c4b5fd">Φ</strong> — Causal Flux (Entropy)</span>
+          <span style="color:var(--accent)">α = 0.25</span>
+        </div>
+        <div style="height:6px;background:var(--border);border-radius:3px;">
+          <div style="height:100%;width:25%;background:linear-gradient(90deg,var(--accent2),var(--accent));border-radius:3px;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+          <span><strong style="color:#c4b5fd">M</strong> — Model Confidence</span>
+          <span style="color:var(--accent)">β = 0.20</span>
+        </div>
+        <div style="height:6px;background:var(--border);border-radius:3px;">
+          <div style="height:100%;width:20%;background:linear-gradient(90deg,var(--accent2),var(--accent));border-radius:3px;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+          <span><strong style="color:#c4b5fd">Σ</strong> — Network Consensus</span>
+          <span style="color:var(--accent)">γ = 0.25</span>
+        </div>
+        <div style="height:6px;background:var(--border);border-radius:3px;">
+          <div style="height:100%;width:25%;background:linear-gradient(90deg,var(--accent2),var(--accent));border-radius:3px;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+          <span><strong style="color:#c4b5fd">K</strong> — Environmental Context</span>
+          <span style="color:var(--accent)">δ = 0.15</span>
+        </div>
+        <div style="height:6px;background:var(--border);border-radius:3px;">
+          <div style="height:100%;width:15%;background:linear-gradient(90deg,var(--accent2),var(--accent));border-radius:3px;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+          <span><strong style="color:#c4b5fd">A</strong> — Adaptive Intelligence</span>
+          <span style="color:var(--accent)">ε = 0.15</span>
+        </div>
+        <div style="height:6px;background:var(--border);border-radius:3px;">
+          <div style="height:100%;width:15%;background:linear-gradient(90deg,var(--accent2),var(--accent));border-radius:3px;"></div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:16px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text2);">
+      SILENCE Principle: If BC &lt; Ψ → entity is silenced, Ξ = 0. Must sustain BC ≥ Ψ for 300 events to recover.
+    </div>
+  </div>
+</main>
+
+<footer>
+  AXIOM — <a href="https://github.com/dev-analyshd/TRION-Protocol" target="_blank">github.com/dev-analyshd/TRION-Protocol</a> &nbsp;·&nbsp;
+  Author: Hudu Yusuf (Analys) &nbsp;·&nbsp; License: CC0-1.0 Public Domain &nbsp;·&nbsp;
+  TRION Oracle V4 (deployed on Arbitrum Sepolia)
+</footer>
+
+<script>
+const UBE_TYPES = [
+  [1,'Transfer'],[2,'Swap'],[3,'Liquidity'],[4,'Stake'],[5,'Unstake'],
+  [6,'Governance'],[7,'Proposal'],[8,'Borrow'],[9,'Repay'],[10,'Liquidate'],
+  [11,'Bridge'],[12,'Deploy'],[13,'Upgrade'],[14,'Mint'],[15,'Burn'],
+  [16,'OracleUpdate'],[17,'MevCapture'],[18,'FlashLoan'],[19,'Airdrop'],[20,'Claim'],
+  [21,'Execute'],[22,'Read'],[23,'Write'],[24,'Spawn'],[25,'Terminate'],
+  [26,'Communicate'],[27,'Sense'],[28,'Actuate'],[29,'Learn'],[30,'Decide'],
+  [31,'Authenticate'],[32,'Transform'],
+];
+
+const grid = document.getElementById('ube-grid');
+UBE_TYPES.forEach(([n, name]) => {
+  const d = document.createElement('div');
+  d.className = 'ube-tag';
+  d.innerHTML = `<span class="ube-num">UBE-${String(n).padStart(2,'0')}</span>${name}`;
+  grid.appendChild(d);
+});
+
+function getSliders() {
+  return {
+    bc: parseFloat(document.getElementById('sl-bc').value),
+    psi: parseFloat(document.getElementById('sl-psi').value),
+    eps: parseFloat(document.getElementById('sl-eps').value),
+    lam: parseFloat(document.getElementById('sl-lam').value),
+    dep: parseFloat(document.getElementById('sl-dep').value),
+  };
+}
+
+function updateCalc() {
+  const { bc, psi, eps, lam, dep } = getSliders();
+  document.getElementById('val-bc').textContent  = bc.toFixed(2);
+  document.getElementById('val-psi').textContent = psi.toFixed(2);
+  document.getElementById('val-eps').textContent = eps.toFixed(2);
+  document.getElementById('val-lam').textContent = lam.toFixed(4);
+  document.getElementById('val-dep').textContent = dep.toFixed(0);
+
+  const dynamicPsi = Math.max(0.10, Math.min(0.99,
+    0.55 - 0.05 * Math.log(1 + dep)
+  ));
+
+  const gate = bc >= dynamicPsi ? 1.0 : 0.0;
+  const xi = gate * eps * Math.exp(lam * dep);
+  const govWeight = bc * dep * 0.8;
+  const silenced = bc < dynamicPsi;
+
+  document.getElementById('xi-val').textContent = xi.toFixed(4);
+  document.getElementById('psi-dyn-val').textContent = dynamicPsi.toFixed(4);
+  document.getElementById('depth-val').textContent = dep.toFixed(0);
+  document.getElementById('gov-val').textContent = govWeight.toFixed(2);
+
+  const ind = document.getElementById('silence-indicator');
+  const dot = document.getElementById('sdot');
+  const txt = document.getElementById('silence-text');
+  const xiItem = document.getElementById('xi-item');
+
+  if (silenced) {
+    ind.className = 'silence-indicator silence-on';
+    dot.style.background = '#ef4444';
+    txt.textContent = `SILENCED — BC(${bc.toFixed(2)}) < Ψ(${dynamicPsi.toFixed(2)})`;
+    xiItem.className = 'result-item silenced';
+  } else {
+    ind.className = 'silence-indicator silence-off';
+    dot.style.background = '#10b981';
+    txt.textContent = `OPERATIONAL — BC(${bc.toFixed(2)}) ≥ Ψ(${dynamicPsi.toFixed(2)})`;
+    xiItem.className = 'result-item coherent';
+  }
+}
+
+['sl-bc','sl-psi','sl-eps','sl-lam','sl-dep'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updateCalc);
+});
+updateCalc();
+
+async function simulateResonance() {
+  const r = await fetch('/api/axiom/resonance').then(r => r.json());
+  const score = r.resonance;
+  document.getElementById('res-score-val').textContent = score.toFixed(4);
+
+  const tierEl = document.getElementById('res-tier-badge');
+  const labels = { high_bandwidth: 'HIGH BANDWIDTH', standard: 'STANDARD', emergency_only: 'EMERGENCY ONLY', no_connection: 'NO CONNECTION' };
+  const classes = { high_bandwidth: 'tier-high', standard: 'tier-std', emergency_only: 'tier-emerg', no_connection: 'tier-none' };
+  tierEl.textContent = labels[r.tier];
+  tierEl.className = 'tier-badge ' + classes[r.tier];
+
+  const barsEl = document.getElementById('rf-bars-a');
+  barsEl.innerHTML = '';
+  r.rfA.forEach(v => {
+    const b = document.createElement('div');
+    b.className = 'rf-bar';
+    b.style.height = (v * 48) + 'px';
+    barsEl.appendChild(b);
+  });
+
+  document.getElementById('resonance-result').classList.add('active');
+}
+</script>
+</body>
+</html>
