@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AXIOM — Adaptive eXpressive Intelligence Ontological Matrix</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
   :root {
     --bg: #0a0c10;
@@ -523,6 +524,27 @@
     <div class="ube-grid" id="ube-grid"></div>
   </div>
 
+  <!-- Integration Test Runner -->
+  <div class="card card-full">
+    <h2><span class="dot"></span>Live Integration Test Runner</h2>
+    <p style="color:var(--text2);font-size:12px;margin-bottom:16px;">
+      Runs the actual test suite against all 7 layers in real-time. Rust (L0-L5) · Python (L4) · Go (L6).
+    </p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+      <button class="btn" onclick="runTests('rust')" id="btn-rust">⚙ Run L0–L5 (Rust)</button>
+      <button class="btn" onclick="runTests('python')" id="btn-python" style="background:linear-gradient(135deg,#b45309,#92400e);">🐍 Run L4 (Python)</button>
+      <button class="btn" onclick="runTests('go')" id="btn-go" style="background:linear-gradient(135deg,#0e7490,#164e63);">🐹 Run L6 (Go)</button>
+    </div>
+    <div id="test-result-area" style="display:none;">
+      <div id="test-summary-bar" style="display:flex;gap:16px;align-items:center;padding:12px 16px;border-radius:8px;margin-bottom:12px;background:var(--bg3);border:1px solid var(--border);">
+        <div id="test-status-dot" style="width:10px;height:10px;border-radius:50%;background:var(--accent3);flex-shrink:0;"></div>
+        <div id="test-status-text" style="font-weight:700;font-size:13px;"></div>
+        <div id="test-count-text" style="color:var(--text2);font-size:12px;margin-left:auto;"></div>
+      </div>
+      <pre id="test-output" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:11px;line-height:1.5;max-height:400px;overflow:auto;color:var(--text2);white-space:pre-wrap;word-break:break-all;"></pre>
+    </div>
+  </div>
+
   <!-- Repository Structure -->
   <div class="card">
     <h2><span class="dot"></span>Repository Structure</h2>
@@ -722,6 +744,63 @@ async function simulateResonance() {
   });
 
   document.getElementById('resonance-result').classList.add('active');
+}
+
+async function runTests(layer) {
+  const area = document.getElementById('test-result-area');
+  const output = document.getElementById('test-output');
+  const statusText = document.getElementById('test-status-text');
+  const statusDot = document.getElementById('test-status-dot');
+  const countText = document.getElementById('test-count-text');
+
+  area.style.display = 'block';
+  output.textContent = 'Running…';
+  statusText.textContent = 'RUNNING';
+  statusDot.style.background = '#f59e0b';
+  countText.textContent = '';
+
+  try {
+    const resp = await fetch('/api/axiom/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ layer }),
+    });
+    const data = await resp.json();
+
+    const ok = data.ok;
+    statusDot.style.background = ok ? '#10b981' : '#ef4444';
+    statusText.textContent = ok ? 'ALL PASS' : 'FAILURES DETECTED';
+
+    if (data.passed !== undefined) {
+      countText.textContent = `${data.passed} passed · ${data.failed} failed`;
+    } else if (data.results) {
+      const langs = Object.keys(data.results);
+      const passed = langs.map(l => data.results[l].passed || 0).reduce((a,b)=>a+b,0);
+      const failed = langs.map(l => data.results[l].failed || 0).reduce((a,b)=>a+b,0);
+      countText.textContent = `${passed} passed · ${failed} failed (Rust + Python + Go)`;
+    }
+
+    let rawOutput = data.output || '';
+    if (data.results) {
+      rawOutput = Object.entries(data.results).map(([lang, r]) =>
+        `=== ${lang.toUpperCase()} ===\n${r.output || r.error || ''}`
+      ).join('\n\n');
+    }
+
+    // Colourize PASS/FAIL in output
+    output.innerHTML = rawOutput
+      .replace(/\[PASS\]/g, '<span style="color:#10b981">[PASS]</span>')
+      .replace(/\[FAIL\]/g, '<span style="color:#ef4444">[FAIL]</span>')
+      .replace(/--- PASS/g, '<span style="color:#10b981">--- PASS</span>')
+      .replace(/--- FAIL/g, '<span style="color:#ef4444">--- FAIL</span>')
+      .replace(/(✓ All layers operational[^\n]*)/g, '<span style="color:#10b981;font-weight:bold">$1</span>');
+
+    output.scrollTop = 0;
+  } catch(e) {
+    statusDot.style.background = '#ef4444';
+    statusText.textContent = 'ERROR';
+    output.textContent = e.message;
+  }
 }
 </script>
 </body>

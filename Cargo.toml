@@ -2,6 +2,7 @@
 members = [
     "axiom-core",
     "axiom-akashic",
+    "axiom-integration",
 ]
 resolver = "2"
 
