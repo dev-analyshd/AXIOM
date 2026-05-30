@@ -171,6 +171,9 @@ class CoherencePlanes:
         }
         return min(weighted, key=weighted.get)  # lowest weighted = greatest drag
 
+    # Alias for backward compatibility
+    dominant_plane = dominant_drag_plane
+
     def as_vector(self) -> Tuple[float, float, float, float, float]:
         """Return plane scores as a tuple."""
         return (self.phi, self.mu, self.sigma, self.kappa, self.alpha)

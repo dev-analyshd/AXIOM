@@ -1,1 +1,2 @@
 - [AXIOM API surface](axiom-api-surface.md) — key corrected call signatures for axiom-core; common pitfalls when writing integration tests against it.
+- [AXIOM project overview](axiom-overview.md) — 7-layer behavioral computing system; 183 tests passing; key commands and durable invariants.

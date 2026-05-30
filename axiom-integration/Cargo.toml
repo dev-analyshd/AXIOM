@@ -10,6 +10,10 @@ description = "AXIOM end-to-end integration tests — all 7 layers"
 name = "axiom-integration"
 path = "src/main.rs"
 
+[[bin]]
+name = "axiom-stress"
+path = "src/stress_main.rs"
+
 [dependencies]
 axiom-core = { path = "../axiom-core" }
 blake3 = { workspace = true }

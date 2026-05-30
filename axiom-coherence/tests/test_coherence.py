@@ -272,21 +272,22 @@ check("UBE frequency segment L1-normalized",
       abs(fp_computed[:32].sum() - 1.0) < 1e-4 or fp_computed[:32].sum() == 0.0)
 
 # ============================================================
-# SUMMARY
+# SUMMARY — only when run as a standalone script
 # ============================================================
-print("\n" + "="*60)
-passed = sum(1 for _, ok in results if ok)
-total  = len(results)
-failed = total - passed
-print(f"\n  TOTAL: {passed}/{total} passed"
-      + (f" — {failed} FAILED" if failed else " — all passing"))
-print()
+if __name__ == "__main__":
+    print("\n" + "="*60)
+    passed = sum(1 for _, ok in results if ok)
+    total  = len(results)
+    failed = total - passed
+    print(f"\n  TOTAL: {passed}/{total} passed"
+          + (f" — {failed} FAILED" if failed else " — all passing"))
+    print()
 
-if failed:
-    print("  Failed tests:")
-    for name, ok in results:
-        if not ok:
-            print(f"    ✗ {name}")
-    sys.exit(1)
-else:
-    sys.exit(0)
+    if failed:
+        print("  Failed tests:")
+        for name, ok in results:
+            if not ok:
+                print(f"    ✗ {name}")
+        sys.exit(1)
+    else:
+        sys.exit(0)
