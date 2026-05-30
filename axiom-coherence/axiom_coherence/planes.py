@@ -85,16 +85,18 @@ PROFILE_STANDARD = BCWeightProfile(
     phi=0.25, mu=0.20, sigma=0.25, kappa=0.15, alpha=0.15,
 )
 
-# Financial (DeFi, trading): causal integrity + network consensus most critical
+# Financial (DeFi, trading): causal integrity + model confidence + network consensus
+# Whitepaper §4.8: φ=0.30, μ=0.25, σ=0.30, κ=0.10, α=0.05
 PROFILE_FINANCIAL = BCWeightProfile(
     name="financial",
-    phi=0.35, mu=0.15, sigma=0.30, kappa=0.10, alpha=0.10,
+    phi=0.30, mu=0.25, sigma=0.30, kappa=0.10, alpha=0.05,
 )
 
-# IoT / Sensor Networks: environmental context + causal continuity primary
+# IoT / Sensor Networks: causal continuity + environmental context primary
+# Whitepaper §4.8: φ=0.40, μ=0.15, σ=0.20, κ=0.15, α=0.10
 PROFILE_IOT = BCWeightProfile(
     name="iot",
-    phi=0.30, mu=0.10, sigma=0.20, kappa=0.30, alpha=0.10,
+    phi=0.40, mu=0.15, sigma=0.20, kappa=0.15, alpha=0.10,
 )
 
 # AI Models: model confidence + adaptive intelligence emphasized
@@ -104,15 +106,17 @@ PROFILE_AI = BCWeightProfile(
 )
 
 # Governance / DAO: network consensus is paramount
+# Whitepaper §4.8: φ=0.20, μ=0.20, σ=0.30, κ=0.20, α=0.10
 PROFILE_GOVERNANCE = BCWeightProfile(
     name="governance",
-    phi=0.20, mu=0.15, sigma=0.40, kappa=0.10, alpha=0.15,
+    phi=0.20, mu=0.20, sigma=0.30, kappa=0.20, alpha=0.10,
 )
 
-# Healthcare: environmental context (patient state) + causal continuity
+# Healthcare: model confidence (diagnostic accuracy) + causal continuity
+# Whitepaper §4.8: φ=0.25, μ=0.30, σ=0.20, κ=0.15, α=0.10
 PROFILE_HEALTHCARE = BCWeightProfile(
     name="healthcare",
-    phi=0.25, mu=0.20, sigma=0.15, kappa=0.25, alpha=0.15,
+    phi=0.25, mu=0.30, sigma=0.20, kappa=0.15, alpha=0.10,
 )
 
 # Registry of all named profiles
@@ -339,14 +343,28 @@ def compute_kappa(
     if curr_hour >= 0 and hist_hours:
         signals.append(1.0 if curr_hour in hist_hours else 0.5)
 
-    # Geographic proximity
+    # Geographic proximity using Haversine distance
     curr_lat = current_context.get('lat', 0.0)
+    curr_lon = current_context.get('lon', 0.0)
     hist_lat = historical_context.get('typical_lat', 0.0)
+    hist_lon = historical_context.get('typical_lon', 0.0)
     if curr_lat and hist_lat:
-        dist = abs(curr_lat - hist_lat)
-        signals.append(max(0.0, 1.0 - dist / 5.0))
+        dist_km = _haversine_km(curr_lat, curr_lon, hist_lat, hist_lon)
+        # Within 10km → 1.0; at 500km → 0.0; beyond → clamp to 0.0
+        signals.append(max(0.0, 1.0 - dist_km / 500.0))
 
     return sum(signals) / max(1, len(signals)) if signals else 0.75
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Compute great-circle distance in km between two (lat, lon) coordinates."""
+    R = 6371.0  # Earth mean radius in km
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2.0) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2.0) ** 2
+    return 2.0 * R * math.asin(math.sqrt(max(0.0, min(1.0, a))))
 
 
 def compute_alpha(

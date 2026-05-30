@@ -29,6 +29,22 @@ from .models import TrajectoryPredictor
 
 logger = structlog.get_logger()
 
+
+class _EntityPredictor:
+    """Thin adapter: wraps TrajectoryPredictor for a specific entity BPI.
+
+    Satisfies the trajectory_model protocol expected by compute_mu():
+        model.probability_of(event_type: int) -> float
+    """
+    __slots__ = ('_predictor', '_bpi')
+
+    def __init__(self, predictor, bpi: bytes) -> None:
+        self._predictor = predictor
+        self._bpi = bpi
+
+    def probability_of(self, event_type: int) -> float:
+        return self._predictor.probability_of(self._bpi, event_type)
+
 # Constants
 PSI_BASE = 0.55
 ALPHA_THREAT = 0.20
@@ -185,7 +201,8 @@ class CoherenceEngine:
 
         # Compute five planes
         phi   = compute_phi(window_events)
-        mu    = compute_mu(window_events, trajectory_model=None)
+        # M plane: wire live trajectory predictor for this entity (M3 fix)
+        mu    = compute_mu(window_events, trajectory_model=_EntityPredictor(self.predictor, bpi))
         sigma = compute_sigma(window_events, state.validator_sigs or None)
         kappa = compute_kappa(window_events)
         alpha = compute_alpha(window_events, state.learning_trajectory or None)

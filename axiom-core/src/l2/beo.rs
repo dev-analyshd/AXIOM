@@ -196,11 +196,76 @@ fn social_cluster_similarity(a: &BehavioralStream, b: &BehavioralStream) -> f32 
     (intersection as f32 / union as f32).clamp(0.0, 1.0)
 }
 
-/// BP: Biometric proxy similarity (physical behavioral signals).
-/// In this implementation, uses event timing jitter as proxy.
+/// BP: Biometric proxy similarity — inter-event timing jitter histogram comparison.
+///
+/// Computes inter-arrival time (IAT) distributions for both streams, then
+/// measures histogram intersection (overlap). Similar behavioral timing rhythms
+/// (keystroke cadence, API call patterns, physiological signals) produce similar
+/// IAT histograms and yield high BP scores.
+///
+/// Uses 16 logarithmic bins spanning 1µs to 1000s (nanosecond timestamps).
 fn biometric_proxy_similarity(a: &BehavioralStream, b: &BehavioralStream) -> f32 {
-    // Simplified: compare entity_type
-    if a.entity_type == b.entity_type { 0.6 } else { 0.1 }
+    let iat_a = inter_arrival_times_ns(&a.events);
+    let iat_b = inter_arrival_times_ns(&b.events);
+
+    if iat_a.is_empty() || iat_b.is_empty() {
+        // Insufficient timing data — fall back to entity type comparison
+        return if a.entity_type == b.entity_type { 0.5 } else { 0.2 };
+    }
+
+    histogram_overlap_score(&iat_a, &iat_b)
+}
+
+/// Compute inter-arrival time intervals (nanoseconds) from event GPS timestamps.
+fn inter_arrival_times_ns(events: &[UniversalBehavioralHash]) -> Vec<u64> {
+    if events.len() < 2 {
+        return vec![];
+    }
+    let mut timestamps: Vec<u64> = events.iter().map(|e| e.gps_timestamp).collect();
+    timestamps.sort_unstable();
+    timestamps.windows(2)
+        .map(|w| w[1].saturating_sub(w[0]))
+        .filter(|&dt| dt > 0)
+        .collect()
+}
+
+/// Histogram intersection similarity ∈ [0, 1] using 16 log-scale bins.
+///
+/// Bins span 1µs (1_000 ns) to 1000s (1e12 ns) on a logarithmic scale.
+/// Similarity = Σ min(hist_A[i], hist_B[i]) after normalizing both histograms.
+fn histogram_overlap_score(a_iats: &[u64], b_iats: &[u64]) -> f32 {
+    const BINS: usize = 16;
+    const MIN_NS: f64 = 1_000.0;   // 1µs
+    const MAX_NS: f64 = 1.0e12;    // 1000s
+    let log_min = MIN_NS.ln();
+    let log_max = MAX_NS.ln();
+    let bin_width = (log_max - log_min) / BINS as f64;
+
+    let mut hist_a = [0.0f32; BINS];
+    let mut hist_b = [0.0f32; BINS];
+
+    for &t in a_iats {
+        let logval = (t as f64).max(MIN_NS).ln();
+        let idx = ((logval - log_min) / bin_width) as usize;
+        hist_a[idx.min(BINS - 1)] += 1.0;
+    }
+    for &t in b_iats {
+        let logval = (t as f64).max(MIN_NS).ln();
+        let idx = ((logval - log_min) / bin_width) as usize;
+        hist_b[idx.min(BINS - 1)] += 1.0;
+    }
+
+    // Normalize to probability distributions
+    let sum_a = hist_a.iter().sum::<f32>().max(1.0);
+    let sum_b = hist_b.iter().sum::<f32>().max(1.0);
+    for v in &mut hist_a { *v /= sum_a; }
+    for v in &mut hist_b { *v /= sum_b; }
+
+    // Intersection: sum of min(p, q) for each bin ∈ [0, 1]
+    hist_a.iter().zip(hist_b.iter())
+        .map(|(p, q)| p.min(*q))
+        .sum::<f32>()
+        .clamp(0.0, 1.0)
 }
 
 #[cfg(test)]

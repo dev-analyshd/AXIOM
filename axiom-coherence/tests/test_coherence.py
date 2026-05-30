@@ -115,13 +115,16 @@ fin = get_profile("financial")
 std = get_profile("standard")
 check("Financial profile has higher phi weight", fin.phi > std.phi)
 
-# IoT profile: environmental context (kappa) most important
+# IoT profile (WP §4.8): causal continuity (phi=0.40) is highest, not kappa.
+# Sensors depend on causal sequence integrity to detect spoofed event streams.
 iot = get_profile("iot")
-check("IoT profile has higher kappa weight", iot.kappa > std.kappa)
+check("IoT profile has higher phi weight (causal continuity for sensors)", iot.phi > std.phi)
 
-# Domain BC computation
-bc_financial = fin.compute_bc(0.9, 0.5, 0.9, 0.5, 0.5)
-bc_iot_same  = iot.compute_bc(0.9, 0.5, 0.9, 0.5, 0.5)
+# Domain BC computation — use phi=1.0, sigma=0.0 to expose phi-weighting difference
+# financial: 0.30*1.0 + 0.25*0.5 + 0.30*0.0 + 0.10*0.5 + 0.05*0.5 = 0.50
+# iot:       0.40*1.0 + 0.15*0.5 + 0.20*0.0 + 0.15*0.5 + 0.10*0.5 = 0.60
+bc_financial = fin.compute_bc(1.0, 0.5, 0.0, 0.5, 0.5)
+bc_iot_same  = iot.compute_bc(1.0, 0.5, 0.0, 0.5, 0.5)
 check("Different domains produce different BC scores",
       abs(bc_financial - bc_iot_same) > 0.01,
       f"financial={bc_financial:.4f}, iot={bc_iot_same:.4f}")

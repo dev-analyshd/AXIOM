@@ -116,6 +116,52 @@ contract BehavioralIdentity {
     }
 
     /**
+     * @notice Register a new behavioral entity with a pre-computed Blake3 purpose hash.
+     *
+     * C5 FIX: The whitepaper specifies BPI derivation uses Blake3 hashing throughout.
+     * The original register() recomputes the purpose hash on-chain using keccak256,
+     * which creates a hash mismatch with L1's Blake3 computation.
+     *
+     * This function accepts the Blake3(purpose) hash pre-computed off-chain by
+     * the L1 engine, matching the BPI derivation formula exactly:
+     *   BPI = Blake3(causal_root || spawner_BPI || Blake3(purpose) || love || env_hash)
+     *
+     * @param bpi           32-byte Behavioral Process Identity
+     * @param spawnerBpi    BPI of the spawning entity (or zero for genesis)
+     * @param purposeHash   Blake3(purpose) computed off-chain by L1 engine
+     * @param love          Love coefficient ∈ [0, 1] × 1e6
+     */
+    function registerWithBlake3PurposeHash(
+        bytes32 bpi,
+        bytes32 spawnerBpi,
+        bytes32 purposeHash,
+        uint32  love
+    ) external {
+        require(!identities[bpi].active, "BehavioralIdentity: BPI already registered");
+        require(love <= 1_000_000, "BehavioralIdentity: love cannot exceed 1.0");
+        require(purposeHash != bytes32(0), "BehavioralIdentity: invalid purpose hash");
+
+        identities[bpi] = IdentityRecord({
+            bpi:          bpi,
+            spawnerBpi:   spawnerBpi,
+            purposeHash:  purposeHash,
+            love:         love,
+            genesisBlock: uint64(block.number),
+            lastUpdated:  uint64(block.number),
+            updateCycle:  0,
+            active:       true
+        });
+
+        if (addressToBpi[msg.sender] == bytes32(0)) {
+            addressToBpi[msg.sender] = bpi;
+        }
+
+        totalEntities++;
+
+        emit EntityRegistered(bpi, spawnerBpi, purposeHash, love, uint64(block.number));
+    }
+
+    /**
      * @notice Update BPI after a BPI_UPDATE_CYCLE (1000 events).
      *
      * The new BPI encodes the entity's current causal history.

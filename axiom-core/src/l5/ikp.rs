@@ -185,11 +185,20 @@ impl ImmunityKernelProtocol {
     pub fn apply_crispr(&mut self, bpi: &BPI, edit: &CrisprEdit) {
         // Record in permanent immune memory
         let proof = self.compute_immunity_proof(&edit.attack_signature, edit);
+
+        // GPS epoch offset: 315,964,800 s = GPS seconds between 1970-01-01 and 1980-01-06
+        const GPS_EPOCH_OFFSET_NS: u64 = 315_964_800_000_000_000;
+        let now_ns = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        let first_seen_ns = now_ns.saturating_add(GPS_EPOCH_OFFSET_NS);
+
         let record = ImmuneMemoryRecord {
             attack_signature: edit.attack_signature,
             crispr_edit: edit.description.clone(),
             immunity_proof: proof,
-            first_seen_ns: 0,
+            first_seen_ns,
             seen_count: 1,
             prevented_count: 0,
         };

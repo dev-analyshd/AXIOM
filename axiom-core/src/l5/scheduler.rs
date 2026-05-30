@@ -109,17 +109,38 @@ impl CBRAScheduler {
     }
 
     /// Update BC and depth for a process.
+    ///
+    /// Implements the full SILENCE state machine including the 300-event
+    /// Recovering window (whitepaper §4.5):
+    ///   Silenced  →  BC >= Ψ  →  Recovering { 300 }  →  0 events  →  Operational
     pub fn update_process(&mut self, bpi: &BPI, new_bc: f32, new_psi: f32, new_depth: f64) {
         if let Some(p) = self.processes.get_mut(bpi) {
             let old_depth = p.depth;
             p.current_bc = new_bc;
             p.psi = new_psi;
             p.depth = new_depth;
+
             p.silence_state = if new_bc < new_psi {
+                // BC below threshold: enter or remain in SILENCE
                 SilenceState::Silenced
             } else {
-                SilenceState::Operational
+                match p.silence_state {
+                    SilenceState::Silenced => {
+                        // BC just recovered above Ψ — begin 300-event window
+                        SilenceState::Recovering { events_remaining: 300 }
+                    }
+                    SilenceState::Recovering { events_remaining } => {
+                        if events_remaining <= 1 {
+                            // Sustained recovery complete — entity is operational
+                            SilenceState::Operational
+                        } else {
+                            SilenceState::Recovering { events_remaining: events_remaining - 1 }
+                        }
+                    }
+                    SilenceState::Operational => SilenceState::Operational,
+                }
             };
+
             self.system_depth += new_depth - old_depth;
         }
     }

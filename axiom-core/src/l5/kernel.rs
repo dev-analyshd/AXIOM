@@ -7,9 +7,9 @@
 //! This is analogous to cellular apoptosis: components that no longer serve
 //! the system are replaced, and the system grows stronger through replacement.
 
-use crate::types::{BPI, SilenceState};
+use crate::types::{BPI, UBEType, GpsTimestampNs, UBHHash};
 use crate::l5::scheduler::CBRAScheduler;
-use crate::l5::bis::BISController;
+use crate::l5::bis::{BISController, BISAction};
 use crate::l5::ikp::ImmunityKernelProtocol;
 use crate::l5::bfs::BehavioralFileSystem;
 use std::collections::HashMap;
@@ -31,6 +31,8 @@ pub struct KernelComponent {
     /// Shadow-testing a replacement candidate?
     pub in_shadow_test: bool,
     pub consecutive_below_fitness: u32,
+    /// Kernel tick when this component was registered — used for age-based scoring.
+    pub registered_at_tick: u64,
 }
 
 impl KernelComponent {
@@ -102,7 +104,7 @@ impl LivingKernel {
                 if component.consecutive_below_fitness >= cycle_threshold {
                     // Search registry for replacement candidate
                     if let Some(replacement) = Self::find_best_candidate(
-                        &self.component_registry, interface
+                        &self.component_registry, interface, self.tick_count
                     ) {
                         replacements.push(ComponentReplacement {
                             old_bpi: component.bpi,
@@ -133,25 +135,70 @@ impl LivingKernel {
     }
 
     /// Find best replacement candidate for a given interface.
+    ///
+    /// Ranking: F(candidate) × D(candidate) / (1 + age_in_ticks) — whitepaper §7.4
     fn find_best_candidate(
         registry: &[KernelComponent],
         interface: &str,
+        current_tick: u64,
     ) -> Option<KernelComponent> {
         registry.iter()
             .filter(|c| c.interface == interface && !c.in_shadow_test)
             .max_by(|a, b| {
-                // Rank by: F_candidate × D(candidate) / (1 + age_of_candidate)
-                let score_a = a.fitness * a.depth as f32;
-                let score_b = b.fitness * b.depth as f32;
+                let age_a = current_tick.saturating_sub(a.registered_at_tick).max(1) as f32;
+                let age_b = current_tick.saturating_sub(b.registered_at_tick).max(1) as f32;
+                let score_a = (a.fitness * a.depth as f32) / age_a;
+                let score_b = (b.fitness * b.depth as f32) / age_b;
                 score_a.partial_cmp(&score_b).unwrap_or(std::cmp::Ordering::Equal)
             })
             .cloned()
     }
 
     /// Tick the kernel (called at scheduling frequency, ~100Hz).
+    ///
+    /// Each tick: advances scheduler, checks for pending evolution cycles.
     pub fn tick(&mut self) {
         self.tick_count += 1;
         let _to_replace = self.scheduler.tick();
+    }
+
+    /// Process a behavioral event through BIS and enforce any resulting actions.
+    ///
+    /// Wires: BIS detection → SILENCE enforcement (C6 fix) and IKP activation.
+    ///
+    /// - TRAJ ≥ 5σ (L4): forces BC=0.0 on scheduler → immediate SILENCE
+    /// - TRAJ ≥ 3σ (L3): triggers IKP INNATE_LAYER for the entity
+    /// - TRAJ ≥ 2σ (L2): logged in BIS interrupt log (coherence engine reads it)
+    /// - TRAJ ≥ 1σ (L1): logged to Akashic-bound interrupt log
+    ///
+    /// Returns the BISInterrupt if one was generated, None for normal events.
+    pub fn process_event(
+        &mut self,
+        bpi: BPI,
+        ube: UBEType,
+        bc: f32,
+        psi: f32,
+        depth: f64,
+        timestamp: GpsTimestampNs,
+        causal_context: UBHHash,
+    ) -> Option<crate::types::BISInterrupt> {
+        let interrupt = self.bis.process_event(&bpi, ube, bc, depth, timestamp, causal_context)?;
+        match self.bis.handle_interrupt(&interrupt) {
+            BISAction::SilenceEntityImmediately => {
+                // L4: TRAJ >= 5σ — enforce SILENCE immediately via scheduler
+                // Sets BC=0.0 which is < any Ψ, forcing Silenced state
+                self.scheduler.update_process(&bpi, 0.0, psi, depth);
+            }
+            BISAction::InvokeIKPInnate => {
+                // L3: TRAJ >= 3σ — activate IKP INNATE_LAYER response
+                self.ikp.update_bc(&bpi, bc, timestamp);
+            }
+            BISAction::AlertCoherenceEngine | BISAction::LogToAkashic => {
+                // L1/L2: logged in interrupt_log, coherence engine polls it
+            }
+            BISAction::Nothing => {}
+        }
+        Some(interrupt)
     }
 
     /// Get AXIOM behavioral truth state for the kernel itself.
@@ -198,6 +245,7 @@ mod tests {
             fitness: 0.3, error_rate: 0.5, throughput_ratio: 0.6,
             is_improving: false, in_shadow_test: false,
             consecutive_below_fitness: 2,
+            registered_at_tick: 0,
         };
         let strong = KernelComponent {
             bpi: [2u8; 32],
@@ -207,6 +255,7 @@ mod tests {
             fitness: 0.85, error_rate: 0.05, throughput_ratio: 0.95,
             is_improving: true, in_shadow_test: false,
             consecutive_below_fitness: 0,
+            registered_at_tick: 0,
         };
 
         kernel.register_component(weak);

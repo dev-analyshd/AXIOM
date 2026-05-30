@@ -113,11 +113,11 @@ impl BFile {
 
     /// Recompute fitness score.
     ///
-    /// F(file) = BC × Love × (depth/age_events)
-    pub fn recompute_fitness(&mut self, now: GpsTimestampNs) {
+    /// F(file) = BC × Love × (depth / age_events)   — whitepaper §7.5
+    pub fn recompute_fitness(&mut self, _now: GpsTimestampNs) {
         let age_events = self.access_count.max(1) as f32;
-        let depth_normalized = (self.depth as f32 / age_events).min(1.0);
-        self.fitness = (self.coherence * self.love * (1.0 + depth_normalized) / 2.0).clamp(0.0, 1.0);
+        let depth_ratio = self.depth as f32 / age_events;
+        self.fitness = (self.coherence * self.love * depth_ratio).clamp(0.0, 1.0);
         self.tier = StorageTier::from_fitness(self.fitness);
     }
 

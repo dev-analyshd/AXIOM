@@ -17,6 +17,8 @@ app.get('/api/axiom/compute', (req, res) => {
     const depth      = parseFloat(req.query.depth)      || 1000.0;
     const threat     = parseFloat(req.query.threat)     || 0;
     const volatility = parseFloat(req.query.volatility) || 0;
+    const love       = parseFloat(req.query.love)       || 1.0;
+    const roleMult   = parseFloat(req.query.roleMult)   || 1.0;
 
     const coherenceGate = bc >= psi ? 1.0 : 0.0;
     const xi = coherenceGate * epsilon * Math.exp(lambda * depth);
@@ -25,13 +27,20 @@ app.get('/api/axiom/compute', (req, res) => {
         0.55 + 0.20 * threat + 0.10 * volatility - 0.05 * Math.log(1 + depth)
     ));
 
+    // GovWeight = BC × D × Love  (whitepaper §8)
+    const govWeight = bc * depth * love;
+
+    // Living Moat rate Λ = Λ_base × Role_Mult × Love  (whitepaper §4.4)
+    const livingMoat = 0.001 * roleMult * love;
+
     res.json({
         xi, bc,
         psi: dynamicPsi,
         silenced: bc < dynamicPsi,
         depth,
-        govWeight: bc * depth * 0.8,
-        livingMoat: 0.001 * 1.0 * 1.0 * depth,
+        love,
+        govWeight,
+        livingMoat,
     });
 });
 
@@ -66,13 +75,14 @@ app.get('/api/axiom/bc', (req, res) => {
     const alpha = parseFloat(req.query.alpha) || 0.8;
     const domain = req.query.domain || 'standard';
 
+    // Domain weight profiles — aligned to whitepaper §4.8 [φ, μ, σ, κ, α]
     const profiles = {
         standard:   [0.25, 0.20, 0.25, 0.15, 0.15],
-        financial:  [0.35, 0.15, 0.30, 0.10, 0.10],
-        iot:        [0.30, 0.10, 0.20, 0.30, 0.10],
+        financial:  [0.30, 0.25, 0.30, 0.10, 0.05],
+        iot:        [0.40, 0.15, 0.20, 0.15, 0.10],
         ai:         [0.20, 0.30, 0.15, 0.10, 0.25],
-        governance: [0.20, 0.15, 0.40, 0.10, 0.15],
-        healthcare: [0.25, 0.20, 0.15, 0.25, 0.15],
+        governance: [0.20, 0.20, 0.30, 0.20, 0.10],
+        healthcare: [0.25, 0.30, 0.20, 0.15, 0.10],
     };
     const w = profiles[domain] || profiles.standard;
     const bc = Math.max(0, Math.min(1,
@@ -91,7 +101,7 @@ app.get('/api/axiom/layers', (req, res) => {
             { id: 'L1', name: 'Universal Behavioral Hash Engine', inventions: [3, 4, 5],
               desc: '32 UBE types, Blake3 self-hash, causal chain, BPI binding',
               status: 'active', lang: 'Rust' },
-            { id: 'L2', name: 'Entity Resolution',            inventions: [10, 11, 14, 15],
+            { id: 'L2', name: 'Entity Resolution',            inventions: [10, 14, 15],
               desc: 'BPI causal identity, BEO cross-stream resolver, ODI, RF vectors',
               status: 'active', lang: 'Rust + Python' },
             { id: 'L3', name: 'Living Akashic Index',         inventions: [6, 13],
@@ -100,10 +110,10 @@ app.get('/api/axiom/layers', (req, res) => {
             { id: 'L4', name: 'Behavioral Coherence Engine',  inventions: [7, 8, 16],
               desc: 'Five-plane BC model, dynamic Ψ threshold, LSTM trajectory',
               status: 'active', lang: 'Python' },
-            { id: 'L5', name: 'Living Kernel',                inventions: [9, 11, 13, 17, 18, 19],
+            { id: 'L5', name: 'Living Kernel',                inventions: [9, 11, 17, 18, 19],
               desc: 'CBRA scheduler, BIS interrupts, IKP immunity, BFS, LBP',
               status: 'active', lang: 'Rust' },
-            { id: 'L6', name: 'Resonance Communication Protocol', inventions: [12, 9],
+            { id: 'L6', name: 'Resonance Communication Protocol', inventions: [12],
               desc: 'Behavior-based routing, cosine RF similarity, TTL hop routing',
               status: 'active', lang: 'Go' },
         ],

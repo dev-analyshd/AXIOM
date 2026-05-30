@@ -89,13 +89,20 @@ contract AkashicProof {
                           anchoredRoots.length - 1);
     }
 
+    event Blake3InclusionAttested(
+        bytes32 indexed merkleRoot,
+        bytes32 indexed ubhSelfHash,
+        address indexed attester
+    );
+
     /**
-     * @notice Verify Merkle inclusion proof for a UBH event.
+     * @notice Verify Merkle inclusion proof for a UBH event (keccak256 tree).
      *
-     * Proves that a specific behavioral event exists in the Akashic Index
-     * without revealing the full event data.
+     * NOTE: This function verifies keccak256-hashed Merkle trees only.
+     * The Akashic Index uses Blake3 hashing internally; use
+     * verifyInclusionAttested() for Blake3-tree inclusion proofs.
      *
-     * @param ubhSelfHash   Blake3 self_hash of the event to prove
+     * @param ubhSelfHash   keccak256 leaf hash of the event to prove
      * @param merkleRoot    Root to prove against
      * @param proof         Merkle proof (sibling hashes)
      * @param leafIndex     Position of leaf in the Merkle tree
@@ -119,6 +126,58 @@ contract AkashicProof {
         }
 
         return computed == merkleRoot;
+    }
+
+    /**
+     * @notice Verify Blake3 Merkle inclusion via oracle attestation (C3 fix).
+     *
+     * The EVM has no native Blake3 precompile, so Blake3 Merkle trees cannot
+     * be verified directly on-chain. Instead, the authorized oracle node:
+     *   1. Verifies the Blake3 Merkle proof off-chain
+     *   2. Signs: keccak256(abi.encodePacked("AXIOM_BLAKE3_INCLUSION", root, leaf))
+     *   3. Submits the signature here for on-chain finalization
+     *
+     * @param ubhSelfHash  Blake3 self_hash of the event to prove
+     * @param merkleRoot   Blake3 Merkle root to prove against
+     * @param oracleSig    ECDSA signature from the authorized oracle
+     */
+    function verifyInclusionAttested(
+        bytes32 ubhSelfHash,
+        bytes32 merkleRoot,
+        bytes   calldata oracleSig
+    ) external returns (bool) {
+        bytes32 digest = keccak256(
+            abi.encodePacked("AXIOM_BLAKE3_INCLUSION", merkleRoot, ubhSelfHash)
+        );
+        address signer = _recoverSigner(digest, oracleSig);
+        bool valid = signer == oracle;
+
+        if (valid) {
+            emit Blake3InclusionAttested(merkleRoot, ubhSelfHash, signer);
+        }
+
+        return valid;
+    }
+
+    /// @dev Recover signer of an Ethereum-prefixed 32-byte message digest.
+    function _recoverSigner(
+        bytes32 digest,
+        bytes calldata sig
+    ) internal pure returns (address) {
+        require(sig.length == 65, "AkashicProof: invalid sig length");
+        bytes32 r;
+        bytes32 s;
+        uint8   v;
+        assembly {
+            r := calldataload(sig.offset)
+            s := calldataload(add(sig.offset, 32))
+            v := byte(0, calldataload(add(sig.offset, 64)))
+        }
+        if (v < 27) v += 27;
+        return ecrecover(
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest)),
+            v, r, s
+        );
     }
 
     /**

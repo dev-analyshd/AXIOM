@@ -264,6 +264,69 @@ contract TRIONOracleV4 {
         emit TruthUpdated(entityBpi, bc, psi, depth, nowSilenced, uint64(block.timestamp));
     }
 
+    /**
+     * @notice Update truth state with a pre-computed Ξ value from the L4 engine.
+     *
+     * C2 FIX: The on-chain _computeXi() uses a first-order linear approximation
+     * of exp(Λ × D). For accuracy, L4 computes the true exponential off-chain
+     * and submits it here directly. Validators verify the xi value before submitting.
+     *
+     * @param entityBpi      32-byte Behavioral Process Identity
+     * @param bc             New BC score × 1e6
+     * @param psi            Current Ψ threshold × 1e6
+     * @param depth          D(entity, t) × 1e6 (Akashic Depth)
+     * @param love           Love coefficient × 1e6
+     * @param precomputedXi  Ξ(entity,t) = exp(Λ × D) pre-computed off-chain × 1e9
+     */
+    function updateTruthFull(
+        bytes32 entityBpi,
+        uint32  bc,
+        uint32  psi,
+        uint64  depth,
+        uint32  love,
+        uint64  precomputedXi
+    ) external onlyValidator {
+        require(bc  <= SCALE, "TRIONOracle: BC cannot exceed 1.0");
+        require(psi <= SCALE, "TRIONOracle: Psi cannot exceed 1.0");
+
+        bool wasSilenced = silenced[entityBpi];
+        bool nowSilenced = bc < psi;
+
+        // Use L4-supplied precomputed xi (true exp(Λ×D)) instead of linear approx
+        uint64 xi = nowSilenced ? 0 : precomputedXi;
+
+        uint8 silenceState = nowSilenced ? 1 : 0;
+        if (wasSilenced && !nowSilenced) {
+            silenceState = 2; // Recovering — still within 300-event window
+        }
+
+        bool isNew = entityTruths[entityBpi].entityBpi == bytes32(0);
+        if (isNew) {
+            entityCount++;
+        }
+
+        entityTruths[entityBpi] = EntityTruth({
+            entityBpi:    entityBpi,
+            bc:           bc,
+            psi:          psi,
+            depth:        depth,
+            love:         love,
+            xi:           xi,
+            silenceState: silenceState,
+            updatedAt:    uint64(block.timestamp)
+        });
+
+        if (nowSilenced && !wasSilenced) {
+            silenced[entityBpi] = true;
+            emit SILENCEActivated(entityBpi, bc, psi, uint64(block.timestamp));
+        } else if (!nowSilenced && wasSilenced) {
+            silenced[entityBpi] = false;
+            emit SILENCELifted(entityBpi, bc, uint64(block.timestamp));
+        }
+
+        emit TruthUpdated(entityBpi, bc, psi, depth, nowSilenced, uint64(block.timestamp));
+    }
+
     // =========================================================================
     // CORE: BEHAVIORAL PROOF SUBMISSION
     // =========================================================================
