@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "FhvCCFv1YEWIyBsfI90h2"
+uri = "file://AXIOM_WHITEPAPER_AUDIT.md"
+type = "text"
+title = "AXIOM Whitepaper vs Codebase — Full Deep Audit"
