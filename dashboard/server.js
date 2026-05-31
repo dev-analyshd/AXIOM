@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const { execSync, execFile } = require('child_process');
+const bzkp = require('./bzkp_simulator');
 
 const app = express();
 const PORT = 5000;
@@ -91,6 +92,69 @@ app.get('/api/axiom/bc', (req, res) => {
     res.json({ bc, phi, mu, sigma, kappa, alpha, domain, weights: w });
 });
 
+// ── BZKP: Prove BC >= Ψ without revealing plane values (Invention #4) ────────
+app.post('/api/axiom/bzkp/prove', (req, res) => {
+    try {
+        const {
+            entityBpi    = '0x' + 'ab'.repeat(32),
+            phi          = 0.85,
+            mu           = 0.80,
+            sigma        = 0.85,
+            kappa        = 0.75,
+            alpha        = 0.80,
+            psiThreshold = 0.55,
+            depth        = 1000,
+        } = req.body || {};
+
+        const result = bzkp.encodeProof({ entityBpi, phi, mu, sigma, kappa, alpha, psiThreshold, depth });
+
+        res.json({
+            ok: true,
+            publicInputs:   result.publicInputs,
+            planes:         result.planes,
+            proofHex:       result.proof.toString('hex'),
+            proofLength:    result.proof.length,
+            proofFormat:    'AXIOM-BZKP-v1 simulation (184 bytes)',
+            productionPath: 'Run `nargo prove` to generate a Barretenberg UltraPlonk proof (~2KB)',
+            circuits: [
+                'circuits/src/main.nr           — BC >= Ψ single-shot proof',
+                'circuits/src/coherence_check.nr — 300-event SILENCE recovery window',
+                'circuits/src/temporal_cluster.nr — 365-day annual behavioral cluster',
+            ],
+        });
+    } catch (e) {
+        res.status(400).json({ ok: false, error: e.message });
+    }
+});
+
+app.post('/api/axiom/bzkp/verify', (req, res) => {
+    try {
+        const { entityBpi, claimedBc, psiThreshold, proofHex } = req.body || {};
+
+        if (!proofHex) return res.status(400).json({ ok: false, error: 'proofHex required' });
+
+        const proof = Buffer.from(proofHex, 'hex');
+        const decoded = bzkp.decodeInputs(proof);
+
+        const bc  = claimedBc    !== undefined ? claimedBc    : decoded.claimedBc;
+        const psi = psiThreshold !== undefined ? psiThreshold : decoded.psiThreshold;
+        const bpi = entityBpi    !== undefined ? entityBpi    : '0x' + decoded.entityBpiHash;
+
+        const result = bzkp.verifyProof({ entityBpi: bpi, claimedBc: bc, psiThreshold: psi, proof });
+
+        res.json({
+            ok:            result.valid,
+            valid:         result.valid,
+            constraint:    result.constraint,
+            reason:        result.reason,
+            publicInputs:  decoded,
+            mode:          'simulation (BehavioralZKVerifier.sol constraint checks)',
+        });
+    } catch (e) {
+        res.status(400).json({ ok: false, error: e.message });
+    }
+});
+
 // ── Layer Status ─────────────────────────────────────────────────────────────
 app.get('/api/axiom/layers', (req, res) => {
     res.json({
@@ -99,8 +163,8 @@ app.get('/api/axiom/layers', (req, res) => {
               desc: 'GPS entropy, HSM attestation, physical continuity verification',
               status: 'active', lang: 'Rust' },
             { id: 'L1', name: 'Universal Behavioral Hash Engine', inventions: [3, 4, 5],
-              desc: '32 UBE types, Blake3 self-hash, causal chain, BPI binding',
-              status: 'active', lang: 'Rust' },
+              desc: '32 UBE types, Blake3 self-hash, causal chain, BPI binding, BZKP (Noir)',
+              status: 'active', lang: 'Rust + Noir' },
             { id: 'L2', name: 'Entity Resolution',            inventions: [10, 14, 15],
               desc: 'BPI causal identity, BEO cross-stream resolver, ODI, RF vectors',
               status: 'active', lang: 'Rust + Python' },
@@ -237,6 +301,34 @@ app.post('/api/axiom/test', (req, res) => {
         if (!results.go.ok) allOk = false;
     } catch (e) {
         results.go = { ok: false, error: e.message };
+        allOk = false;
+    }
+
+    // BZKP — Noir circuits + BehavioralZKVerifier (JS simulation)
+    try {
+        const testResults = bzkp.runBZKPTests();
+        const passed = testResults.filter(r => r.pass).length;
+        const failed = testResults.filter(r => !r.pass).length;
+        const lines = testResults.map(r => {
+            const status = r.pass ? '\x1b[32m[PASS]\x1b[0m' : '\x1b[31m[FAIL]\x1b[0m';
+            return `  ${status} ${r.name}  ${r.detail}`;
+        });
+        const header = '\x1b[1m═══ Invention #4 · BZKP — Behavioral Zero-Knowledge Proofs (Noir) ═══\x1b[0m';
+        const summary = `\n  Passed: ${passed}  Failed: ${failed}  Total: ${testResults.length}`;
+        const mode = '  Mode: simulation (BehavioralZKVerifier.sol constraints in JS)';
+        const noir = '  Noir:  circuits/src/main.nr + coherence_check.nr + temporal_cluster.nr';
+        const sol  = '  Contract: contracts/contracts/BehavioralZKVerifier.sol';
+        const output = [header, ...lines, summary, mode, noir, sol].join('\n');
+        results.bzkp = {
+            ok: failed === 0,
+            passed,
+            failed,
+            output,
+            tests: testResults,
+        };
+        if (failed > 0) allOk = false;
+    } catch (e) {
+        results.bzkp = { ok: false, error: e.message };
         allOk = false;
     }
 

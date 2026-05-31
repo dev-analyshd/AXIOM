@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.24;
 
+import "./BehavioralZKVerifier.sol";
+
 /**
  * @title AkashicProof
  * @notice On-chain Merkle root anchoring for the Akashic Index.
@@ -36,6 +38,9 @@ contract AkashicProof {
 
     address public immutable oracle;
 
+    /// BZKP verifier (Invention #4)
+    BehavioralZKVerifier public bzkpVerifier;
+
     event RootAnchored(
         bytes32 indexed merkleRoot,
         uint64 fromTimestamp,
@@ -55,8 +60,22 @@ contract AkashicProof {
         _;
     }
 
-    constructor(address _oracle) {
+    /**
+     * @param _oracle         Authorized oracle relayer address
+     * @param _bzkpVerifier   BehavioralZKVerifier contract (address(0) = simulation mode)
+     */
+    constructor(address _oracle, address _bzkpVerifier) {
         oracle = _oracle;
+        if (_bzkpVerifier != address(0)) {
+            bzkpVerifier = BehavioralZKVerifier(_bzkpVerifier);
+        }
+    }
+
+    /**
+     * @notice Update the BZKP verifier contract address.
+     */
+    function setBZKPVerifier(address verifier) external onlyOracle {
+        bzkpVerifier = BehavioralZKVerifier(verifier);
     }
 
     /**
@@ -181,20 +200,32 @@ contract AkashicProof {
     }
 
     /**
-     * @notice Verify a Behavioral ZK Proof (BZKP).
+     * @notice Verify a Behavioral ZK Proof (BZKP — Invention #4).
      *
-     * BZKP proves: BC(entity, t) > Ψ(entity, t)
-     * without revealing: Φ, M, Σ, K, A individual plane values
-     * or the specific UBH events that produced BC.
+     * Proves:  BC(entity, t) >= Ψ(entity, t)
+     * Hides:   Φ, M, Σ, K, A individual plane values, raw UBH event sequence
      *
-     * In production: delegates to deployed Barretenberg/Noir verifier.
+     * The proof must commit to a BC value >= Ψ that was computed over events
+     * included in the supplied anchoredRoot (Akashic Merkle commitment).
+     *
+     * Verification path:
+     *   1. Confirm anchoredRoot is a known Akashic commitment (on-chain).
+     *   2. Delegate proof verification to BehavioralZKVerifier:
+     *        - Simulation mode: full Solidity constraint checks (8 constraints).
+     *        - Production mode: Barretenberg UltraPlonk verification.
+     *   3. verifyProofOnly() extracts BC and Ψ from the proof's public inputs,
+     *      so AkashicProof does not need to track the entity's current BC/Ψ.
+     *
+     * @param entityBpi     Entity BPI — must match proof's identity commitment
+     * @param anchoredRoot  Akashic Merkle root the proof was generated against
+     * @param zkProof       BZKP proof bytes (184 bytes simulation / ~2KB Barretenberg)
      */
     function verifyBZKP(
         bytes32 entityBpi,
         bytes32 anchoredRoot,
         bytes   calldata zkProof
     ) external returns (bool) {
-        // Verify the anchored root exists in our chain
+        // Step 1: Confirm the Akashic root is a known commitment
         bool rootExists = false;
         for (uint i = 0; i < anchoredRoots.length; i++) {
             if (anchoredRoots[i].merkleRoot == anchoredRoot) {
@@ -202,11 +233,18 @@ contract AkashicProof {
                 break;
             }
         }
-        require(rootExists, "AkashicProof: root not anchored");
+        require(rootExists, "AkashicProof: root not anchored on-chain");
 
-        // In production: call Noir Barretenberg verifier contract
-        // bool verified = barretenbergVerifier.verify(zkProof, [entityBpi, anchoredRoot]);
-        bool verified = zkProof.length >= 64; // Simplified stub
+        // Step 2: Verify the BZKP proof
+        bool verified;
+        if (address(bzkpVerifier) != address(0)) {
+            // Full constraint verification via BehavioralZKVerifier.
+            // verifyProofOnly() extracts BC and Ψ from the proof — no oracle call needed.
+            verified = bzkpVerifier.verifyProofOnly(entityBpi, zkProof);
+        } else {
+            // No verifier deployed — accept structurally non-empty proof (pre-production)
+            verified = zkProof.length >= 64;
+        }
 
         emit BZKPVerified(entityBpi, anchoredRoot, verified);
         return verified;

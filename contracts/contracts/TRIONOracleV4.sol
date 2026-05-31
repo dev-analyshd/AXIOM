@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.24;
 
+import "./BehavioralZKVerifier.sol";
+
 /**
  * @title TRIONOracleV4
  * @notice On-chain behavioral coherence oracle implementing the AXIOM Master Equation.
@@ -88,6 +90,9 @@ contract TRIONOracleV4 {
 
     /// Oracle version — uses Akashic Depth, not discrete versioning
     string public constant VERSION = "D(AXIOM,t)";
+
+    /// BZKP verifier contract (Invention #4 — BehavioralZKVerifier.sol)
+    BehavioralZKVerifier public bzkpVerifier;
 
     // =========================================================================
     // EVENTS
@@ -190,10 +195,25 @@ contract TRIONOracleV4 {
     // CONSTRUCTOR
     // =========================================================================
 
-    constructor(address _governanceModule) {
+    /**
+     * @param _governanceModule  DAO governance contract address
+     * @param _bzkpVerifier      BehavioralZKVerifier contract address (address(0) = simulation mode)
+     */
+    constructor(address _governanceModule, address _bzkpVerifier) {
         owner = msg.sender;
         governanceModule = _governanceModule;
         validators[msg.sender] = true;
+        if (_bzkpVerifier != address(0)) {
+            bzkpVerifier = BehavioralZKVerifier(_bzkpVerifier);
+        }
+    }
+
+    /**
+     * @notice Update the BZKP verifier contract address.
+     * @param verifier  New BehavioralZKVerifier address (address(0) = simulation mode)
+     */
+    function setBZKPVerifier(address verifier) external onlyOwner {
+        bzkpVerifier = BehavioralZKVerifier(verifier);
     }
 
     // =========================================================================
@@ -559,16 +579,33 @@ contract TRIONOracleV4 {
     /**
      * @dev Verify a Behavioral Zero-Knowledge Proof (BZKP — Invention #4).
      *
-     * BZKP proves BC > Ψ without revealing individual plane values.
-     * Full verification uses Noir/Barretenberg verifier contract.
-     * In production: call BehavioralZKVerifier.verify(entityBpi, ubhHash, zkProof).
+     * Proves BC(entity, t) >= Ψ(entity, t) without revealing Φ, M, Σ, K, A.
+     *
+     * Delegates to BehavioralZKVerifier.verifyView():
+     *   - Simulation mode (bzkpVerifier == address(0) or unset): length check fallback
+     *   - Simulation mode (bzkpVerifier set, no Barretenberg): full constraint validation
+     *   - Production mode (Barretenberg deployed):              UltraPlonk proof verification
+     *
+     * The entity's current on-chain BC and Ψ are cross-checked against the proof's
+     * encoded public inputs, ensuring the proof was generated for this entity's
+     * current behavioral state.
      */
     function _verifyBZKP(
         bytes32 entityBpi,
-        bytes32 ubhHash,
+        bytes32 /* ubhHash */,
         bytes calldata zkProof
-    ) internal pure returns (bool) {
-        // In production: delegatecall to deployed Barretenberg verifier
-        return zkProof.length >= 64;
+    ) internal view returns (bool) {
+        if (address(bzkpVerifier) == address(0)) {
+            // No verifier deployed — accept any non-empty proof (pre-production only)
+            return zkProof.length >= 64;
+        }
+
+        // Read entity's current on-chain BC and Ψ for cross-checking
+        EntityTruth memory et = entityTruths[entityBpi];
+        uint32 bc  = et.bc  > 0 ? et.bc  : 550_000;  // Default PSI_BASE if not registered
+        uint32 psi = et.psi > 0 ? et.psi : 550_000;
+
+        // verifyView: stateless — no counter increments or events in this internal call
+        return bzkpVerifier.verifyView(entityBpi, bc, psi, zkProof);
     }
 }

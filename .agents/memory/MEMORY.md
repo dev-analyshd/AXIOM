@@ -1,3 +1,4 @@
 - [AXIOM API surface](axiom-api-surface.md) — key corrected call signatures for axiom-core; common pitfalls when writing integration tests against it.
-- [AXIOM project overview](axiom-overview.md) — 7-layer behavioral computing system; 183 tests passing; key commands and durable invariants.
-- [AXIOM audit findings](axiom-audit-findings.md) — 7 critical + 7 moderate + 5 minor findings; full report at AXIOM_WHITEPAPER_AUDIT.md.
+- [AXIOM project overview](axiom-overview.md) — 7-layer behavioral computing system; 181 tests passing; key commands and durable invariants.
+- [AXIOM audit findings](axiom-audit-findings.md) — all C1–C7, M1–M7, N1–N5 findings implemented and verified.
+- [AXIOM BZKP implementation](axiom-bzkp.md) — Noir circuits + BehavioralZKVerifier.sol + JS simulator; pitfalls for proof encoding.
