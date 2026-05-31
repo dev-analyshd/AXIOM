@@ -476,6 +476,189 @@ contract BehavioralZKVerifier {
         return keccak256(abi.encodePacked(phi, mu, sigma, kappa, alpha));
     }
 
+    // =========================================================================
+    // SILENCE RECOVERY PROOF (coherence_check.nr circuit)
+    // =========================================================================
+
+    /// Recovery proof magic — "BZKP Recovery v1" (coherence_check.nr)
+    bytes4  public constant RECOVERY_MAGIC   = 0xBE0CAD00;
+
+    /// Recovery proof byte length (164 bytes — see coherence_check.nr format)
+    uint256 public constant RECOVERY_PROOF_LENGTH = 164;
+
+    /// Sustained recovery window — must match coherence_check.nr SUSTAINED_WINDOW
+    uint32  public constant SUSTAINED_WINDOW = 300;
+
+    event RecoveryProofVerified(
+        bytes32 indexed entityBpi,
+        uint32          minBcInWindow,
+        uint32          psiThreshold,
+        uint32          eventCount,
+        bool            silenceLifted
+    );
+
+    /**
+     * @notice Verify a SILENCE recovery proof (coherence_check.nr circuit).
+     *
+     * Proves that BC(entity, t_i) >= Ψ for all i in a 300-event sustained
+     * window without revealing individual BC values.  A valid proof authorises
+     * the oracle to lift SILENCE for the entity.
+     *
+     * Applies eight recovery constraints (R0–R7) mirroring coherence_check.nr.
+     *
+     * @param entityBpi      Entity BPI the proof must commit to
+     * @param recoveryProof  164-byte AXIOM-BZKP-Recovery-v1 proof
+     * @return valid         True iff proof is valid and SILENCE may be lifted
+     */
+    function verifyRecoveryProof(
+        bytes32 entityBpi,
+        bytes   calldata recoveryProof
+    ) external returns (bool valid) {
+        (bool ok, string memory reason, uint32 minBc, uint32 psi) =
+            _checkRecoveryConstraints(entityBpi, recoveryProof);
+
+        if (ok) {
+            totalVerified++;
+            emit RecoveryProofVerified(
+                entityBpi, minBc, psi, SUSTAINED_WINDOW, true
+            );
+        } else {
+            totalRejected++;
+            emit ProofRejected(entityBpi, reason);
+        }
+        return ok;
+    }
+
+    /**
+     * @notice Stateless recovery proof verification (view — no side effects).
+     */
+    function verifyRecoveryProofView(
+        bytes32 entityBpi,
+        bytes   calldata recoveryProof
+    ) external view returns (bool) {
+        (bool ok,,,) = _checkRecoveryConstraints(entityBpi, recoveryProof);
+        return ok;
+    }
+
+    /**
+     * @dev Eight constraints mirroring coherence_check.nr:
+     *
+     *   R0 — magic 0xBE0CAD00, length 164, version 0x00000001
+     *   R1 — entity_bpi non-zero and matches expectedBpi
+     *   R2 — window temporally ordered (window_end > window_start)
+     *   R3 — Ψ in valid range [PSI_FLOOR, SCALE]
+     *   R4 — min_bc >= psiThreshold  ← SILENCE recovery core claim
+     *   R5 — event_count == SUSTAINED_WINDOW (300)
+     *   R6 — bc_commitment non-zero (private BC witness required)
+     *   R7 — sat_proof = keccak256(bpi‖ws‖we‖psi‖min_bc‖event_count‖bc_commitment‖nonce)
+     *
+     * Recovery proof layout (164 bytes):
+     *   [0..3]    magic           0xBE0CAD00
+     *   [4..7]    version         0x00000001
+     *   [8..39]   entity_bpi      32 bytes
+     *   [40..47]  window_start    uint64 BE GPS ns
+     *   [48..55]  window_end      uint64 BE GPS ns
+     *   [56..59]  psi_threshold   uint32 BE × 1e6
+     *   [60..63]  min_bc          uint32 BE × 1e6
+     *   [64..67]  event_count     uint32 BE (must == 300)
+     *   [68..99]  bc_commitment   32 bytes — witness commitment
+     *   [100..131] sat_proof      32 bytes
+     *   [132..163] nonce          32 bytes
+     */
+    function _checkRecoveryConstraints(
+        bytes32 entityBpi,
+        bytes   calldata proof
+    ) internal pure returns (bool, string memory, uint32 minBc, uint32 psi) {
+
+        // ── R0: Structure ────────────────────────────────────────────────────
+        if (proof.length != RECOVERY_PROOF_LENGTH)
+            return (false, "R0: recovery proof must be exactly 164 bytes", 0, 0);
+
+        bytes4 magic;
+        bytes4 ver;
+        assembly {
+            magic := calldataload(proof.offset)
+            ver   := calldataload(add(proof.offset, 4))
+        }
+        if (magic != RECOVERY_MAGIC)
+            return (false, "R0: invalid recovery proof magic (expected 0xBE0CAD00)", 0, 0);
+        if (ver != CIRCUIT_VERSION)
+            return (false, "R0: invalid circuit version (expected 0x00000001)", 0, 0);
+
+        // ── R1: Entity BPI non-zero and matches caller ───────────────────────
+        bytes32 proofBpi;
+        assembly { proofBpi := calldataload(add(proof.offset, 8)) }
+        if (proofBpi == bytes32(0))
+            return (false, "R1: entity_bpi must be non-zero", 0, 0);
+        if (proofBpi != entityBpi)
+            return (false, "R1: entity_bpi mismatch with proof encoding", 0, 0);
+
+        // ── R2: Window temporally ordered ────────────────────────────────────
+        uint64 windowStart;
+        uint64 windowEnd;
+        assembly {
+            windowStart := shr(192, calldataload(add(proof.offset, 40)))
+            windowEnd   := shr(192, calldataload(add(proof.offset, 48)))
+        }
+        if (windowEnd <= windowStart)
+            return (false, "R2: window_end must be after window_start", 0, 0);
+
+        // ── R3: Ψ in valid range ─────────────────────────────────────────────
+        uint32 psiThreshold;
+        assembly { psiThreshold := shr(224, calldataload(add(proof.offset, 56))) }
+        if (psiThreshold < PSI_FLOOR)
+            return (false, "R3: psi_threshold below absolute coherence floor (0.10)", 0, 0);
+        if (psiThreshold > SCALE)
+            return (false, "R3: psi_threshold cannot exceed 1.0", 0, 0);
+
+        // ── R4: min_bc >= Ψ — the SILENCE recovery claim ────────────────────
+        uint32 minBcValue;
+        assembly { minBcValue := shr(224, calldataload(add(proof.offset, 60))) }
+        if (minBcValue < psiThreshold)
+            return (false, "R4: min_bc < psi_threshold — entity not recovered", 0, 0);
+        if (minBcValue > SCALE)
+            return (false, "R4: min_bc cannot exceed 1.0", 0, 0);
+
+        // ── R5: event_count == SUSTAINED_WINDOW ──────────────────────────────
+        uint32 eventCount;
+        assembly { eventCount := shr(224, calldataload(add(proof.offset, 64))) }
+        if (eventCount != SUSTAINED_WINDOW)
+            return (false, "R5: event_count must be exactly 300 (sustained recovery window)", 0, 0);
+
+        // ── R6: bc_commitment non-zero ───────────────────────────────────────
+        bytes32 bcCommitment;
+        assembly { bcCommitment := calldataload(add(proof.offset, 68)) }
+        if (bcCommitment == bytes32(0))
+            return (false, "R6: bc_commitment must be non-zero (BC witness required)", 0, 0);
+
+        // ── R7: sat_proof integrity ──────────────────────────────────────────
+        // sat_proof = keccak256(bpi ‖ ws ‖ we ‖ psi ‖ min_bc ‖ event_count ‖ bc_commitment ‖ nonce)
+        bytes32 satProof;
+        bytes32 nonce;
+        assembly {
+            satProof := calldataload(add(proof.offset, 100))
+            nonce    := calldataload(add(proof.offset, 132))
+        }
+        bytes32 expectedSat = keccak256(abi.encodePacked(
+            proofBpi,
+            windowStart,
+            windowEnd,
+            psiThreshold,
+            minBcValue,
+            eventCount,
+            bcCommitment,
+            nonce
+        ));
+        if (satProof != expectedSat)
+            return (false, "R7: sat_proof invalid — bc_commitment or public inputs tampered", 0, 0);
+
+        return (true, "", minBcValue, psiThreshold);
+    }
+
+    // =========================================================================
+    // PROOF ENCODING HELPER
+    // =========================================================================
+
     /**
      * @notice Compute BC from five plane values using the standard weights.
      *

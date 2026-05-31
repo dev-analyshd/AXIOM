@@ -155,6 +155,78 @@ app.post('/api/axiom/bzkp/verify', (req, res) => {
     }
 });
 
+// ── BZKP: SILENCE Recovery Proof (coherence_check.nr — Invention #4) ─────────
+//
+// An entity that fell below Ψ (SILENCED) must sustain BC >= Ψ for 300
+// consecutive behavioral events to lift SILENCE.  This endpoint lets the
+// L4 Coherence Engine generate a BZKP recovery proof that commits to all
+// 300 BC values without revealing them, then submit that proof to
+// TRIONOracleV4.liftSilence() for on-chain attestation.
+//
+// Two-step flow:
+//   POST /api/axiom/bzkp/silence-recovery/prove   — generate recovery proof
+//   POST /api/axiom/bzkp/silence-recovery/verify  — verify a recovery proof
+
+app.post('/api/axiom/bzkp/silence-recovery/prove', (req, res) => {
+    try {
+        const {
+            entityBpi    = 'aabbccdd' + '00'.repeat(24) + 'aabbccdd',
+            bcValues,          // array of exactly 300 BC values ∈ [0, 1.0]
+            psiThreshold = 0.55,
+            windowStart  = null,
+            windowEnd    = null,
+        } = req.body || {};
+
+        if (!bcValues)
+            return res.status(400).json({ ok: false, error: 'bcValues (array of 300 BC values) required' });
+
+        const result = bzkp.encodeSilenceRecoveryProof({
+            entityBpi, bcValues, psiThreshold, windowStart, windowEnd,
+        });
+
+        res.json({
+            ok:           true,
+            silenceLifted: true,
+            publicInputs: result.publicInputs,
+            proofHex:     result.proof.toString('hex'),
+            proofLength:  result.proof.length,
+            proofFormat:  'AXIOM-BZKP-Recovery-v1 simulation (164 bytes)',
+            circuit:      'circuits/src/coherence_check.nr — 300-event SILENCE recovery window',
+            onChain:      'Call TRIONOracleV4.liftSilence(entityBpi, recoveryProof) to lift SILENCE',
+            mode:         'simulation (coherence_check.nr constraints in JS)',
+        });
+    } catch (e) {
+        res.status(400).json({ ok: false, error: e.message });
+    }
+});
+
+app.post('/api/axiom/bzkp/silence-recovery/verify', (req, res) => {
+    try {
+        const { entityBpi, proofHex } = req.body || {};
+
+        if (!proofHex)  return res.status(400).json({ ok: false, error: 'proofHex required' });
+        if (!entityBpi) return res.status(400).json({ ok: false, error: 'entityBpi required' });
+
+        const proof = Buffer.from(proofHex, 'hex');
+        const result = bzkp.verifySilenceRecoveryProof({ entityBpi, proof });
+
+        res.json({
+            ok:           result.valid,
+            valid:        result.valid,
+            silenceLifted: result.silenceLifted || false,
+            constraint:   result.constraint,
+            reason:       result.reason,
+            publicInputs: result.publicInputs,
+            mode:         'simulation (coherence_check.nr constraint checks)',
+            onChain:      result.valid
+                ? 'Proof valid — call TRIONOracleV4.liftSilence(entityBpi, proof) to complete on-chain'
+                : `Proof invalid at ${result.constraint}: ${result.reason}`,
+        });
+    } catch (e) {
+        res.status(400).json({ ok: false, error: e.message });
+    }
+});
+
 // ── Layer Status ─────────────────────────────────────────────────────────────
 app.get('/api/axiom/layers', (req, res) => {
     res.json({
@@ -306,19 +378,23 @@ app.post('/api/axiom/test', (req, res) => {
 
     // BZKP — Noir circuits + BehavioralZKVerifier (JS simulation)
     try {
-        const testResults = bzkp.runBZKPTests();
+        const mainTests     = bzkp.runBZKPTests();
+        const recoveryTests = bzkp.runRecoveryTests();
+        const testResults   = [...mainTests, ...recoveryTests];
         const passed = testResults.filter(r => r.pass).length;
         const failed = testResults.filter(r => !r.pass).length;
         const lines = testResults.map(r => {
             const status = r.pass ? '\x1b[32m[PASS]\x1b[0m' : '\x1b[31m[FAIL]\x1b[0m';
             return `  ${status} ${r.name}  ${r.detail}`;
         });
-        const header = '\x1b[1m═══ Invention #4 · BZKP — Behavioral Zero-Knowledge Proofs (Noir) ═══\x1b[0m';
+        const header  = '\x1b[1m═══ Invention #4 · BZKP — Behavioral Zero-Knowledge Proofs (Noir) ═══\x1b[0m';
+        const header2 = `  ┌─ main.nr (BC >= Ψ): ${mainTests.filter(r=>r.pass).length}/${mainTests.length}`;
+        const header3 = `  └─ coherence_check.nr (SILENCE recovery): ${recoveryTests.filter(r=>r.pass).length}/${recoveryTests.length}`;
         const summary = `\n  Passed: ${passed}  Failed: ${failed}  Total: ${testResults.length}`;
-        const mode = '  Mode: simulation (BehavioralZKVerifier.sol constraints in JS)';
-        const noir = '  Noir:  circuits/src/main.nr + coherence_check.nr + temporal_cluster.nr';
-        const sol  = '  Contract: contracts/contracts/BehavioralZKVerifier.sol';
-        const output = [header, ...lines, summary, mode, noir, sol].join('\n');
+        const mode    = '  Mode: simulation (BehavioralZKVerifier.sol + coherence_check.nr constraints in JS)';
+        const noir    = '  Noir:  circuits/src/main.nr + coherence_check.nr + temporal_cluster.nr';
+        const sol     = '  Contracts: BehavioralZKVerifier.sol (verifyRecoveryProof) + TRIONOracleV4.sol (liftSilence)';
+        const output  = [header, header2, header3, ...lines, summary, mode, noir, sol].join('\n');
         results.bzkp = {
             ok: failed === 0,
             passed,

@@ -348,6 +348,56 @@ contract TRIONOracleV4 {
     }
 
     // =========================================================================
+    // CORE: SILENCE RECOVERY (liftSilence via BZKP recovery proof)
+    // =========================================================================
+
+    /**
+     * @notice Lift SILENCE for an entity using a BZKP recovery proof.
+     *
+     * The entity must have sustained BC >= Ψ for 300 consecutive behavioral
+     * events (coherence_check.nr SUSTAINED_WINDOW).  The prover submits a
+     * 164-byte AXIOM-BZKP-Recovery-v1 proof that commits to all 300 BC values
+     * without revealing them.  BehavioralZKVerifier validates all 8 recovery
+     * constraints (R0–R7) and, if valid, SILENCE is permanently lifted.
+     *
+     * Flow:
+     *   1. L4 Coherence Engine calls /api/axiom/bzkp/silence-recovery/prove
+     *      to generate a 164-byte recovery proof from 300 sustained BC values.
+     *   2. L4 relayer calls liftSilence(entityBpi, proof) here.
+     *   3. BehavioralZKVerifier.verifyRecoveryProof() validates R0–R7.
+     *   4. On success: silenced[entityBpi] = false, silenceState = 0.
+     *
+     * @param entityBpi      Entity to lift SILENCE for
+     * @param recoveryProof  164-byte AXIOM-BZKP-Recovery-v1 proof
+     */
+    function liftSilence(
+        bytes32 entityBpi,
+        bytes   calldata recoveryProof
+    ) external onlyValidator {
+        require(silenced[entityBpi], "TRIONOracle: entity is not SILENCED");
+        require(entityTruths[entityBpi].entityBpi != bytes32(0),
+            "TRIONOracle: entity not registered");
+        require(address(bzkpVerifier) != address(0),
+            "TRIONOracle: BZKP verifier not configured");
+
+        bool valid = bzkpVerifier.verifyRecoveryProof(entityBpi, recoveryProof);
+        require(valid, "TRIONOracle: recovery proof invalid — 300-event sustained window not proven");
+
+        // Lift SILENCE: entity returns to operational state
+        silenced[entityBpi] = false;
+
+        EntityTruth storage truth = entityTruths[entityBpi];
+        truth.silenceState = 0;   // operational
+        truth.updatedAt    = uint64(block.timestamp);
+
+        emit SILENCELifted(
+            entityBpi,
+            truth.bc,
+            uint64(block.timestamp)
+        );
+    }
+
+    // =========================================================================
     // CORE: BEHAVIORAL PROOF SUBMISSION
     // =========================================================================
 

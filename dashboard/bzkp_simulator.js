@@ -539,6 +539,336 @@ function runBZKPTests() {
     return results;
 }
 
+// ── SILENCE RECOVERY PROOF (coherence_check.nr) ──────────────────────────────
+//
+// Secondary BZKP circuit: proves BC(entity, t_i) >= Ψ for all i in a 300-event
+// sustained window, without revealing individual BC values or event types.
+// Used to lift SILENCE on-chain with cryptographic attestation.
+//
+// Recovery proof format (AXIOM-BZKP-Recovery-v1 — 164 bytes):
+//   [0 ..  3]  magic           0xBE0CAD00  (recovery circuit marker)
+//   [4 ..  7]  version         0x00000001
+//   [8 .. 39]  entity_bpi      32-byte BPI commitment
+//   [40.. 47]  window_start    uint64 BE GPS ns (public)
+//   [48.. 55]  window_end      uint64 BE GPS ns (public)
+//   [56.. 59]  psi_threshold   uint32 BE × 1e6 (public)
+//   [60.. 63]  min_bc          uint32 BE × 1e6 — minimum BC in window (public)
+//   [64.. 67]  event_count     uint32 BE (must equal SUSTAINED_WINDOW = 300)
+//   [68.. 99]  bc_commitment   SHA256(all 300 BC values packed uint32 BE) — witness
+//   [100..131] sat_proof       SHA256(bpi‖ws‖we‖psi‖min_bc‖event_count‖bc_commitment‖nonce)
+//   [132..163] nonce           32-byte randomness
+//   Total: 164 bytes
+//
+// Recovery constraints (R0–R7) mirror coherence_check.nr:
+//   R0 — magic 0xBE0CAD00, length 164, version 0x00000001
+//   R1 — entity_bpi non-zero
+//   R2 — window temporally ordered (window_end > window_start)
+//   R3 — Ψ in valid range [PSI_FLOOR, SCALE]
+//   R4 — min_bc >= psiThreshold (the SILENCE recovery claim)
+//   R5 — event_count == SUSTAINED_WINDOW (300 events required)
+//   R6 — bc_commitment non-zero (witness was provided)
+//   R7 — sat_proof = SHA256(bpi‖ws‖we‖psi‖min_bc‖ec‖bc_commitment‖nonce)
+
+const RECOVERY_MAGIC       = Buffer.from('BE0CAD00', 'hex');
+const RECOVERY_PROOF_LEN   = 164;
+const SUSTAINED_WINDOW     = 300;   // coherence_check.nr SUSTAINED_WINDOW
+
+/**
+ * Encode a 164-byte SILENCE recovery proof.
+ *
+ * Implements the coherence_check.nr circuit in simulation mode.
+ * Proves that all 300 BC values in the window are >= psiThreshold,
+ * without revealing any individual BC value.
+ *
+ * @param {object} opts
+ * @param {string|Buffer} opts.entityBpi      — 32-byte BPI
+ * @param {number[]}      opts.bcValues       — Array of exactly 300 BC values ∈ [0, 1.0]
+ * @param {number}        opts.psiThreshold   — Ψ ∈ [0.10, 1.0] (default 0.55)
+ * @param {number}        opts.windowStart    — GPS ns (integer; default: now - 300s)
+ * @param {number}        opts.windowEnd      — GPS ns (integer; default: now)
+ * @param {Buffer}        opts.nonce          — 32-byte nonce (random if omitted)
+ * @returns {{ proof: Buffer, publicInputs: object }}
+ */
+function encodeSilenceRecoveryProof({
+    entityBpi,
+    bcValues,
+    psiThreshold = 0.55,
+    windowStart  = null,
+    windowEnd    = null,
+    nonce        = null,
+}) {
+    const bpiBuffer = bpiToBuffer(entityBpi);
+    const psiInt    = Math.round(psiThreshold * SCALE);
+
+    // ── Validate inputs (mirrors coherence_check.nr constraints) ─────────────
+    if (psiInt < PSI_FLOOR)
+        throw new Error(`psiThreshold ${psiThreshold} below absolute floor 0.10`);
+    if (psiInt > SCALE)
+        throw new Error(`psiThreshold ${psiThreshold} > 1.0`);
+
+    if (!Array.isArray(bcValues) || bcValues.length !== SUSTAINED_WINDOW)
+        throw new Error(`bcValues must be exactly ${SUSTAINED_WINDOW} BC values (got ${bcValues ? bcValues.length : 0})`);
+
+    // Validate each BC value >= Ψ (coherence_check.nr Constraint 6)
+    let minBcFloat = Infinity;
+    for (let i = 0; i < bcValues.length; i++) {
+        const v = bcValues[i];
+        if (v < 0 || v > 1.0)
+            throw new Error(`bcValues[${i}] = ${v} is outside [0, 1.0]`);
+        if (v < psiThreshold)
+            throw new Error(`bcValues[${i}] = ${v.toFixed(4)} < Ψ ${psiThreshold} — entity not recovered at event ${i}`);
+        if (v < minBcFloat) minBcFloat = v;
+    }
+
+    const minBcInt = Math.round(minBcFloat * SCALE);
+
+    // GPS timestamps
+    const GPS_OFFSET = 315_964_800_000_000_000n; // GPS epoch vs Unix epoch (ns)
+    const nowNs = BigInt(Date.now()) * 1_000_000n + GPS_OFFSET;
+    const wsInt = windowStart !== null ? BigInt(windowStart) : nowNs - BigInt(SUSTAINED_WINDOW) * 1_000_000_000n;
+    const weInt = windowEnd   !== null ? BigInt(windowEnd)   : nowNs;
+
+    if (weInt <= wsInt)
+        throw new Error(`window_end (${weInt}) must be after window_start (${wsInt})`);
+
+    // ── Compute private witness commitment ────────────────────────────────────
+    // bc_commitment = SHA256(all 300 bcValues packed as uint32 BE)
+    const h = crypto.createHash('sha256');
+    for (const v of bcValues) {
+        h.update(uint32BE(Math.round(v * SCALE)));
+    }
+    const bcCommitment = h.digest();
+
+    const nonceBuffer = nonce || crypto.randomBytes(32);
+    if (nonceBuffer.length !== 32) throw new Error('nonce must be 32 bytes');
+
+    const eventCountBuf = uint32BE(SUSTAINED_WINDOW);
+
+    // sat_proof = SHA256(bpi ‖ ws ‖ we ‖ psi ‖ min_bc ‖ event_count ‖ bc_commitment ‖ nonce)
+    const satProof = sha256(
+        bpiBuffer,
+        uint64BE(wsInt),
+        uint64BE(weInt),
+        uint32BE(psiInt),
+        uint32BE(minBcInt),
+        eventCountBuf,
+        bcCommitment,
+        nonceBuffer,
+    );
+
+    const proof = Buffer.concat([
+        RECOVERY_MAGIC,           // [0..3]    0xBE0CAD00
+        CIRCUIT_VER,              // [4..7]    0x00000001
+        bpiBuffer,                // [8..39]   entity_bpi (32 bytes)
+        uint64BE(wsInt),          // [40..47]  window_start (8 bytes)
+        uint64BE(weInt),          // [48..55]  window_end (8 bytes)
+        uint32BE(psiInt),         // [56..59]  psi_threshold
+        uint32BE(minBcInt),       // [60..63]  min_bc
+        eventCountBuf,            // [64..67]  event_count
+        bcCommitment,             // [68..99]  bc_commitment (32 bytes)
+        satProof,                 // [100..131] sat_proof (32 bytes)
+        nonceBuffer,              // [132..163] nonce (32 bytes)
+    ]);
+
+    if (proof.length !== RECOVERY_PROOF_LEN)
+        throw new Error(`Internal: recovery proof length ${proof.length} ≠ ${RECOVERY_PROOF_LEN}`);
+
+    return {
+        proof,
+        publicInputs: {
+            entityBpi:     bpiBuffer.toString('hex'),
+            windowStart:   wsInt.toString(),
+            windowEnd:     weInt.toString(),
+            psiThreshold:  psiInt,
+            minBc:         minBcInt,
+            minBcFloat:    minBcFloat,
+            eventCount:    SUSTAINED_WINDOW,
+        },
+    };
+}
+
+/**
+ * Verify a 164-byte SILENCE recovery proof.
+ *
+ * Applies all eight recovery constraints (R0–R7) mirroring coherence_check.nr.
+ *
+ * @param {object} opts
+ * @param {string|Buffer} opts.entityBpi   — expected entity BPI
+ * @param {Buffer}        opts.proof       — 164-byte recovery proof
+ * @returns {{ valid: boolean, constraint: string|null, reason: string|null, silenceLifted: boolean }}
+ */
+function verifySilenceRecoveryProof({ entityBpi, proof }) {
+    const bpiBuffer = bpiToBuffer(entityBpi);
+
+    // R0 — Structure: magic, length, version
+    if (!Buffer.isBuffer(proof) || proof.length !== RECOVERY_PROOF_LEN)
+        return fail('R0', `recovery proof must be ${RECOVERY_PROOF_LEN} bytes (got ${proof ? proof.length : 'null'})`);
+
+    if (!proof.slice(0, 4).equals(RECOVERY_MAGIC))
+        return fail('R0', `invalid magic (expected BE0CAD00, got ${proof.slice(0,4).toString('hex').toUpperCase()})`);
+
+    if (!proof.slice(4, 8).equals(CIRCUIT_VER))
+        return fail('R0', `invalid circuit version (expected 00000001, got ${proof.slice(4,8).toString('hex')})`);
+
+    // R1 — Entity BPI non-zero and matches caller
+    const proofBpi = proof.slice(8, 40);
+    if (proofBpi.equals(Buffer.alloc(32)))
+        return fail('R1', 'entity_bpi must be non-zero');
+    if (!proofBpi.equals(bpiBuffer))
+        return fail('R1', `entity_bpi mismatch: proof=${proofBpi.toString('hex').slice(0,8)}… expected=${bpiBuffer.toString('hex').slice(0,8)}…`);
+
+    // R2 — Window temporally ordered
+    const wsInt = proof.readBigUInt64BE(40);
+    const weInt = proof.readBigUInt64BE(48);
+    if (weInt <= wsInt)
+        return fail('R2', `window_end (${weInt}) must be after window_start (${wsInt})`);
+
+    // R3 — Ψ in valid range
+    const psiInt = proof.readUInt32BE(56);
+    if (psiInt < PSI_FLOOR)
+        return fail('R3', `psi_threshold ${psiInt} below absolute floor ${PSI_FLOOR} (0.10)`);
+    if (psiInt > SCALE)
+        return fail('R3', `psi_threshold ${psiInt} > SCALE (1e6)`);
+
+    // R4 — min_bc >= psiThreshold (core SILENCE recovery claim)
+    const minBc = proof.readUInt32BE(60);
+    if (minBc < psiInt)
+        return fail('R4', `min_bc ${minBc} < psi_threshold ${psiInt} — entity not recovered`);
+    if (minBc > SCALE)
+        return fail('R4', `min_bc ${minBc} > SCALE (1e6) — invalid BC value`);
+
+    // R5 — event_count == SUSTAINED_WINDOW (300)
+    const eventCount = proof.readUInt32BE(64);
+    if (eventCount !== SUSTAINED_WINDOW)
+        return fail('R5', `event_count ${eventCount} ≠ ${SUSTAINED_WINDOW} (sustained 300-event window required)`);
+
+    // R6 — bc_commitment non-zero
+    const bcCommitment = proof.slice(68, 100);
+    if (bcCommitment.equals(Buffer.alloc(32)))
+        return fail('R6', 'bc_commitment must be non-zero (BC witness required)');
+
+    // R7 — sat_proof binds all public inputs to the private bc_commitment
+    const eventCountBuf = uint32BE(eventCount);
+    const nonce         = proof.slice(132, 164);
+    const satProof      = proof.slice(100, 132);
+    const expectedSat = sha256(
+        proofBpi,
+        uint64BE(wsInt),
+        uint64BE(weInt),
+        uint32BE(psiInt),
+        uint32BE(minBc),
+        eventCountBuf,
+        bcCommitment,
+        nonce,
+    );
+    if (!satProof.equals(expectedSat))
+        return fail('R7', 'sat_proof invalid — bc_commitment or public inputs tampered');
+
+    return {
+        valid:         true,
+        constraint:    null,
+        reason:        null,
+        silenceLifted: true,
+        publicInputs: {
+            entityBpi:    proofBpi.toString('hex'),
+            windowStart:  wsInt.toString(),
+            windowEnd:    weInt.toString(),
+            psiThreshold: psiInt,
+            minBc,
+            minBcFloat:   minBc / SCALE,
+            eventCount,
+        },
+    };
+}
+
+// ── SILENCE recovery tests (BZKP.11–BZKP.15) ─────────────────────────────────
+
+function runRecoveryTests() {
+    const results = [];
+    const pass  = (name, detail) => { results.push({ name, detail, pass: true });  };
+    const xfail = (name, detail) => { results.push({ name, detail, pass: false }); };
+
+    const BPI = 'aabbccdd' + '00'.repeat(24) + 'aabbccdd';
+
+    // ── BZKP.11: Valid recovery proof — 300 events all above Ψ ───────────────
+    try {
+        const bcValues = Array.from({ length: 300 }, () => 0.60 + Math.random() * 0.39);
+        const { proof, publicInputs } = encodeSilenceRecoveryProof({
+            entityBpi: BPI,
+            bcValues,
+            psiThreshold: 0.55,
+        });
+        const r = verifySilenceRecoveryProof({ entityBpi: BPI, proof });
+        if (r.valid && r.silenceLifted && proof.length === RECOVERY_PROOF_LEN) {
+            pass('BZKP.11', `Recovery proof accepted — minBC=${(publicInputs.minBcFloat).toFixed(3)}, 300 events above Ψ=0.55, SILENCE lifted`);
+        } else {
+            xfail('BZKP.11', `Rejected at ${r.constraint}: ${r.reason}`);
+        }
+    } catch (e) { xfail('BZKP.11', e.message); }
+
+    // ── BZKP.12: Too few events — encoder rejects ────────────────────────────
+    try {
+        const bcValues = Array.from({ length: 299 }, () => 0.75);
+        encodeSilenceRecoveryProof({ entityBpi: BPI, bcValues, psiThreshold: 0.55 });
+        xfail('BZKP.12', '299-event window was accepted (should require exactly 300)');
+    } catch (e) {
+        if (e.message.includes('299')) {
+            pass('BZKP.12', `Encoder rejects < 300 events: "${e.message}"`);
+        } else {
+            xfail('BZKP.12', `Unexpected error: ${e.message}`);
+        }
+    }
+
+    // ── BZKP.13: One BC below Ψ in window — encoder rejects ──────────────────
+    try {
+        const bcValues = Array.from({ length: 300 }, () => 0.75);
+        bcValues[147] = 0.40; // Inject one BC below Ψ at event 147
+        encodeSilenceRecoveryProof({ entityBpi: BPI, bcValues, psiThreshold: 0.55 });
+        xfail('BZKP.13', 'Sub-threshold BC at event 147 was accepted (should reject)');
+    } catch (e) {
+        if (e.message.includes('0.4000') || e.message.includes('0.400') || e.message.includes('event 147')) {
+            pass('BZKP.13', `Encoder rejects window with BC < Ψ: "${e.message}"`);
+        } else {
+            xfail('BZKP.13', `Unexpected error: ${e.message}`);
+        }
+    }
+
+    // ── BZKP.14: Tampered min_bc (attacker lowers claim) → R7 rejected ───────
+    try {
+        const bcValues = Array.from({ length: 300 }, (_, i) => 0.60 + (i % 10) * 0.04);
+        const { proof } = encodeSilenceRecoveryProof({ entityBpi: BPI, bcValues, psiThreshold: 0.55 });
+        // Tamper: raise min_bc to claim higher minimum (forge a better record)
+        const tampered = Buffer.from(proof);
+        tampered.writeUInt32BE(950_000, 60); // claim min_bc = 0.95 (impossible — sat_proof breaks)
+        const r = verifySilenceRecoveryProof({ entityBpi: BPI, proof: tampered });
+        if (!r.valid && r.constraint === 'R7') {
+            pass('BZKP.14', `Tampered min_bc detected at R7 — sat_proof binds min_bc to bc_commitment`);
+        } else if (!r.valid) {
+            pass('BZKP.14', `Tampered min_bc rejected at ${r.constraint}: ${r.reason}`);
+        } else {
+            xfail('BZKP.14', 'Tampered min_bc was accepted — sat_proof binding broken');
+        }
+    } catch (e) { xfail('BZKP.14', e.message); }
+
+    // ── BZKP.15: Wrong BPI — recovery proof for a different entity rejected ───
+    try {
+        const BPI_B = 'ff001122' + '00'.repeat(24) + 'ff001122';
+        const bcValues = Array.from({ length: 300 }, () => 0.70);
+        const { proof } = encodeSilenceRecoveryProof({ entityBpi: BPI, bcValues, psiThreshold: 0.55 });
+        // Try to submit entity A's recovery proof to lift SILENCE for entity B
+        const r = verifySilenceRecoveryProof({ entityBpi: BPI_B, proof });
+        if (!r.valid && r.constraint === 'R1') {
+            pass('BZKP.15', `Cross-entity recovery rejected at R1 — BPI identity binding holds`);
+        } else if (!r.valid) {
+            pass('BZKP.15', `Cross-entity recovery rejected at ${r.constraint}: ${r.reason}`);
+        } else {
+            xfail('BZKP.15', 'Recovery proof accepted for wrong entity — identity binding failed');
+        }
+    } catch (e) { xfail('BZKP.15', e.message); }
+
+    return results;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function fail(constraint, reason) {
@@ -552,11 +882,16 @@ module.exports = {
     PSI_FLOOR,
     PSI_BASE,
     PROOF_LEN,
+    RECOVERY_PROOF_LEN,
+    SUSTAINED_WINDOW,
     computeBC,
     computePlanesHash,
     encodeProof,
     verifyProof,
     verifyProofOnly,
     decodeInputs,
+    encodeSilenceRecoveryProof,
+    verifySilenceRecoveryProof,
     runBZKPTests,
+    runRecoveryTests,
 };

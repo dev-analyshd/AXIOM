@@ -39,6 +39,26 @@ Hash: SHA256 in JS simulator, keccak256 in Solidity (BehavioralZKVerifier.sol). 
 - C6: BC >= Ψ (core BZKP claim — mirrors main.nr Constraint 3)
 - C7: Constraint satisfaction proof sat_proof = H(bc‖psi‖bpi‖planes_hash‖nonce) — binds private planes to public inputs
 
+## SILENCE recovery proof (coherence_check.nr — AXIOM-BZKP-Recovery-v1)
+
+**Format: 164 bytes**
+```
+[0..3]    0xBE0CAD00 magic (distinct from main circuit 0xBE0CA100)
+[8..39]   entity_bpi (32 bytes)
+[40..47]  window_start GPS ns uint64 BE
+[48..55]  window_end GPS ns uint64 BE
+[56..59]  psi_threshold uint32 × 1e6
+[60..63]  min_bc uint32 × 1e6 (minimum BC across all 300 events)
+[64..67]  event_count uint32 (must be exactly 300)
+[68..99]  bc_commitment SHA256(300 bc_values packed uint32 BE) — private witness
+[100..131] sat_proof SHA256(bpi‖ws‖we‖psi‖min_bc‖event_count‖bc_commitment‖nonce)
+[132..163] nonce 32 bytes
+```
+
+**Eight constraints (R0–R7):** Structure → BPI non-zero → window ordered → Ψ range → min_bc >= Ψ (core claim) → event_count == 300 → bc_commitment non-zero → sat_proof integrity.
+
+**On-chain flow:** L4 calls `POST /api/axiom/bzkp/silence-recovery/prove` → gets 164-byte proof → validator calls `TRIONOracleV4.liftSilence(entityBpi, proof)` → `BehavioralZKVerifier.verifyRecoveryProof()` → SILENCE lifted, `SILENCELifted` event emitted.
+
 ## BZKP.04 planes swap attack test
 
 Test requires two proofs with **different** plane values so their planes_hash values differ. Using default planes for both proofs makes planes_hash identical → attack undetectable → test false-passes. Always specify distinct phi/mu/sigma/kappa/alpha for the two proofs.
